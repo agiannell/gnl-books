@@ -18,7 +18,7 @@ Their **CSV import still works**, so that's the migration path, and it's a stron
 
 - **Custom skills are alive.** Alexa+ added AI-native SDKs (Action, Web Action, Multi-Agent) but classic ASK custom skills remain supported, and nothing skill-, widget-, personalization-, or account-linking-related is on the deprecated list. Recent removals are unrelated (Routines Kit, Smart Home API v2).
 - **No certification needed.** A skill left in **development stage** runs on devices registered to the same Amazon account as the developer account. No store listing, no privacy policy, and none of the Kids-category restrictions that would otherwise forbid account linking in a child-directed skill.
-- **Alexa can, in principle, tell who is talking.** `context.System.person.personId` is documented as GA: with a Voice ID and Personalize skills enabled, requests carry a stable per-person ID. *Unverified in practice* — the spike's adult-profile test reported no `person` object, so this is an optimization to confirm, not a foundation. See "Spike results" below.
+- **Alexa can tell which adult is talking.** `context.System.person.personId` carries a stable per-person ID when the skill declares the personalization permission and the speaker has a Voice ID with Personalize skills on. Verified on an adult profile; **not yet verified for kids** speaking to a shared device. See "Spike results" below.
 - **Widgets are real but the riskiest piece.** Third-party widgets are supported and survived the Alexa+ home-screen redesign, but they use a *subset* of APL, must be associated with a skill, and are updated through the **Data Store REST API** rather than normal skill responses — a genuinely different programming model. Treated below as a spike, not a v1 promise.
 
 **The architectural consequence:** three clients (web, voice, widget) share one dataset, so this needs a **real shared API**. That's the concrete reason to break from the `gnl-lambdas` shape, where Next.js Server Components read DynamoDB directly — a pattern that cannot extend to a Lambda-hosted skill and a Data Store-fed widget.
@@ -256,7 +256,7 @@ A throwaway "Reading Check" skill was built in the developer console and tested 
 |---|---|
 | Developer console simulator | Works. No `person` object (expected — the simulator has no voice profile) |
 | Developer and Echo accounts match | Yes — the skill appears under *Your Skills → Dev* in the Alexa app |
-| Adult-profile Echo | **Skill launches.** Reported no `person` object (see "personId" below) |
+| Adult-profile Echo | **Skill launches.** `person` was absent until the skill's **Skills Personalization** permission was enabled; after that the speaker was recognized |
 | Kid's bedroom Dot (Amazon Kids mode) | **Skill is not invokable** — Alexa gives its generic "I don't know how to help with that" |
 | Parent Dashboard → child profile → *Manage Apps and Content* | Lists Amazon's catalog of published kid-eligible skills (all off by default). Reading Check was not seen in the screenshots reviewed; skills are not searchable there |
 
@@ -269,7 +269,15 @@ The shared device cannot identify the reader, so the skill has to:
 1. **`context.System.person.personId`** — when present, map it to a profile via `profiles.alexa_person_id`.
 2. **Ask once per session** — *"Who's reading?"* — and cache the answer in session attributes so it's asked at most once per conversation. This is the guaranteed path and the one to build first.
 
-**`personId` status: unresolved.** The adult-profile Echo reported no `person` object. Amazon only sends `personId` when the speaker has a **Voice ID** and **Personalize skills** is enabled, so this may be setup rather than a limitation — retest after confirming both. Until verified, treat "ask who's reading" as the primary path and `personId` as an optimization.
+**`personId` status: works for an adult.** It required three things, and the first was easy to miss:
+
+1. The **skill declares the permission** — *Build → Permissions → Skills Personalization* in the developer console, i.e. the manifest scope `alexa::person_id:read`. **Without it no `person` object is sent, whatever the user's settings.** This must be in the checked-in skill manifest for `ask deploy`, not only toggled by hand.
+2. The speaker has a **Voice ID**.
+3. **Personalize skills** is on for that profile (*Settings → Your Profile & Family → Voice ID → Voice ID settings*).
+
+Verified: with all three, the adult profile on a shared Echo is recognized (`person` present). **Not yet verified: a child speaking to a shared adult-profile device.** A child's Voice ID switches a device into Amazon Kids mode, so a kid may get either a `personId` or the same generic refusal the bedroom Dots gave. This is the next test, and it decides whether kids use voice at all.
+
+Reader resolution stays as designed — `personId` first, ask as the fallback — because recognition is imperfect (noise, distance) and an unrecognized speaker must never be guessed.
 
 **Unmapped is the safe default.** Writing a kid's progress to the wrong sibling is the one error that would actually upset someone, so an unrecognized speaker always falls through to asking rather than guessing.
 
@@ -432,7 +440,7 @@ Deliberately force a concurrent write conflict to prove `withRetry()` actually h
 
 **Alexa** — the early spike is done (see "Spike results"). One open item remains, then the checks below apply at step 8:
 
-*Still open:* confirm whether `personId` arrives on the adult Echo once a **Voice ID** exists and **Personalize skills** is enabled. Log the raw request envelope (`ENVELOPE` in CloudWatch) and check `context.System.person`.
+*Still open:* have a **child** speak to the kitchen Echo (adult-profile device) and see what happens — a `personId`, or the generic refusal. Log the raw request envelope (`ENVELOPE` in CloudWatch) and check `context.System.person`. If kids are refused on shared devices too, voice becomes adult-only and kids use the web app and the Show 15 touch widget.
 
 At step 8, on a shared device (kitchen Echo / Show 15):
 1. Link the account in the Alexa app (the skill shows in **Skills & Games** with a development badge).
@@ -454,7 +462,8 @@ At step 8, on a shared device (kitchen Echo / Show 15):
 - **DSQL optimistic concurrency.** Forgetting retry logic produces rare, confusing failures under concurrent writes. The `withRetry()` wrapper must be the only way `core` opens a transaction.
 - **DSQL migration constraints** — one DDL per transaction, DDL separate from DML, `OC001` retries expected. The runner has to be built for this from the start.
 - **Voice is limited to shared adult-profile devices.** The spike confirmed a development-stage skill is not invokable from Amazon Kids-mode bedroom Dots. Kids can still use voice on the kitchen Echo and Show 15, but not from their own rooms.
-- **`personId` may not arrive at all.** The adult Echo reported no `person` object. If it stays that way after Voice ID and Personalize skills are confirmed, every voice session starts with "Who's reading?" — workable, but clunkier. The design treats asking as the primary path so this is a degradation, not a failure.
+- **Kids may not be usable on shared devices either.** `personId` works for an adult, but a child's Voice ID triggers Amazon Kids mode, which blocked the skill on bedroom Dots. If it does the same on the kitchen Echo, voice is adult-only. Test this before investing in the voice intents.
+- **The personalization permission is easy to lose.** It lives in the skill manifest (`alexa::person_id:read`) and must be in the checked-in manifest, or an `ask deploy` can silently strip it and `personId` disappears with no error.
 - **Never guess the reader.** Writing a kid's progress to the wrong sibling is the one error that would actually upset someone, so an unrecognized speaker always falls through to asking.
 - **Widget Data Store API** is the least-documented surface here; the spike exists to find out early.
 - **Hardcover PAT expiry** — choose a long expiry and note the date. An expired token breaks search while cached books keep working, which is a confusing failure mode; surface a clear error in the UI.
