@@ -18,7 +18,7 @@ Their **CSV import still works**, so that's the migration path, and it's a stron
 
 - **Custom skills are alive.** Alexa+ added AI-native SDKs (Action, Web Action, Multi-Agent) but classic ASK custom skills remain supported, and nothing skill-, widget-, personalization-, or account-linking-related is on the deprecated list. Recent removals are unrelated (Routines Kit, Smart Home API v2).
 - **No certification needed.** A skill left in **development stage** runs on devices registered to the same Amazon account as the developer account. No store listing, no privacy policy, and none of the Kids-category restrictions that would otherwise forbid account linking in a child-directed skill.
-- **Alexa can tell which adult is talking.** `context.System.person.personId` carries a stable per-person ID when the skill declares the personalization permission and the speaker has a Voice ID with Personalize skills on. Verified on an adult profile; **not yet verified for kids** speaking to a shared device. See "Spike results" below.
+- **Alexa can tell which adult is talking.** `context.System.person.personId` carries a stable per-person ID when the skill declares the personalization permission and the speaker has a Voice ID with Personalize skills on. Verified on an adult profile; **kids are refused** (Amazon Kids mode), even on an adult-profile device, so voice is adult-only. See "Spike results" below.
 - **Widgets are real but the riskiest piece.** Third-party widgets are supported and survived the Alexa+ home-screen redesign, but they use a *subset* of APL, must be associated with a skill, and are updated through the **Data Store REST API** rather than normal skill responses — a genuinely different programming model. Treated below as a spike, not a v1 promise.
 
 **The architectural consequence:** three clients (web, voice, widget) share one dataset, so this needs a **real shared API**. That's the concrete reason to break from the `gnl-lambdas` shape, where Next.js Server Components read DynamoDB directly — a pattern that cannot extend to a Lambda-hosted skill and a Data Store-fed widget.
@@ -34,7 +34,7 @@ Their **CSV import still works**, so that's the migration path, and it's a stron
 | Frontend | **Vite + React Router v7 SPA** on S3 + CloudFront |
 | Auth | **Cognito** user pool — web sign-in *and* Alexa account linking (OAuth2) |
 | Book metadata | **Hardcover GraphQL**, behind a swappable `BookSource` interface |
-| Voice | ASK custom skill (development stage) on **shared adult-profile devices only**; reader resolved by `personId` if available, otherwise "who's reading?" |
+| Voice | ASK custom skill (development stage), **adult-only** (kids are refused in Amazon Kids mode); reader resolved by `personId` if available, otherwise "who's reading?" |
 | v1 scope | Shelves + ratings + reviews · progress + yearly goals · per-person Goodreads CSV export · Alexa voice logging |
 | Out of v1 | Family activity feed, barcode scanning, recommendations |
 
@@ -258,6 +258,7 @@ A throwaway "Reading Check" skill was built in the developer console and tested 
 | Developer and Echo accounts match | Yes — the skill appears under *Your Skills → Dev* in the Alexa app |
 | Adult-profile Echo | **Skill launches.** `person` was absent until the skill's **Skills Personalization** permission was enabled; after that the speaker was recognized |
 | Kid's bedroom Dot (Amazon Kids mode) | **Skill is not invokable** — Alexa gives its generic "I don't know how to help with that" |
+| Child speaking to an adult-profile Dot | **Same generic refusal.** An adult saying the identical phrase on the same Dot launched the skill and was recognized (`personId` and `deviceId` present), so the device and invocation are fine and the child's voice is the variable |
 | Parent Dashboard → child profile → *Manage Apps and Content* | Lists Amazon's catalog of published kid-eligible skills (all off by default). Reading Check was not seen in the screenshots reviewed; skills are not searchable there |
 
 **Decision: voice is a shared-device feature.** Kids' bedroom Dots stay in Amazon Kids mode and do not run this skill. Voice logging happens on adult-profile devices (kitchen Echo, Echo Show 15). Taking bedroom Dots out of Kids mode, or beta-testing the skill into the kids' approval list, were considered and rejected — the first removes protections the family set up deliberately, the second is unverified.
@@ -275,7 +276,7 @@ The shared device cannot identify the reader, so the skill has to:
 2. The speaker has a **Voice ID**.
 3. **Personalize skills** is on for that profile (*Settings → Your Profile & Family → Voice ID → Voice ID settings*).
 
-Verified: with all three, the adult profile on a shared Echo is recognized (`person` present). **Not yet verified: a child speaking to a shared adult-profile device.** A child's Voice ID switches a device into Amazon Kids mode, so a kid may get either a `personId` or the same generic refusal the bedroom Dots gave. This is the next test, and it decides whether kids use voice at all.
+Verified: with all three, the adult profile on a shared Echo is recognized (`person` present). **Verified for a child: refused.** A child speaking to an adult-profile Dot got the same generic "I don't know how to help with that" as the bedroom Dots, while an adult saying the identical phrase on that Dot worked. A child's Voice ID switches the device into Amazon Kids mode, which only runs published kid-eligible skills. **Voice is therefore adult-only.** Kids use the web app and the Show 15 touch widget.
 
 Reader resolution stays as designed — `personId` first, ask as the fallback — because recognition is imperfect (noise, distance) and an unrecognized speaker must never be guessed.
 
@@ -440,7 +441,7 @@ Deliberately force a concurrent write conflict to prove `withRetry()` actually h
 
 **Alexa** — the early spike is done (see "Spike results"). One open item remains, then the checks below apply at step 8:
 
-*Still open:* have a **child** speak to the kitchen Echo (adult-profile device) and see what happens — a `personId`, or the generic refusal. Log the raw request envelope (`ENVELOPE` in CloudWatch) and check `context.System.person`. If kids are refused on shared devices too, voice becomes adult-only and kids use the web app and the Show 15 touch widget.
+*Resolved:* a child speaking to an adult-profile Dot is refused with the generic message, so voice is adult-only and kids use the web app and the Show 15 touch widget. Not yet confirmed from CloudWatch that no request reaches the Lambda in that case (expected, since Kids mode blocks before the skill is called).
 
 At step 8, on a shared device (kitchen Echo / Show 15):
 1. Link the account in the Alexa app (the skill shows in **Skills & Games** with a development badge).
@@ -462,7 +463,7 @@ At step 8, on a shared device (kitchen Echo / Show 15):
 - **DSQL optimistic concurrency.** Forgetting retry logic produces rare, confusing failures under concurrent writes. The `withRetry()` wrapper must be the only way `core` opens a transaction.
 - **DSQL migration constraints** — one DDL per transaction, DDL separate from DML, `OC001` retries expected. The runner has to be built for this from the start.
 - **Voice is limited to shared adult-profile devices.** The spike confirmed a development-stage skill is not invokable from Amazon Kids-mode bedroom Dots. Kids can still use voice on the kitchen Echo and Show 15, but not from their own rooms.
-- **Kids may not be usable on shared devices either.** `personId` works for an adult, but a child's Voice ID triggers Amazon Kids mode, which blocked the skill on bedroom Dots. If it does the same on the kitchen Echo, voice is adult-only. Test this before investing in the voice intents.
+- **Voice is adult-only.** Confirmed: a child's Voice ID triggers Amazon Kids mode, which refused the skill on bedroom Dots and on an adult-profile Dot. This lowers the value of step 8, since voice logging mostly served the kids; keep Alexa optional and last, after the widget spike.
 - **The personalization permission is easy to lose.** It lives in the skill manifest (`alexa::person_id:read`) and must be in the checked-in manifest, or an `ask deploy` can silently strip it and `personId` disappears with no error.
 - **Never guess the reader.** Writing a kid's progress to the wrong sibling is the one error that would actually upset someone, so an unrecognized speaker always falls through to asking.
 - **Widget Data Store API** is the least-documented surface here; the spike exists to find out early.
