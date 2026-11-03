@@ -1,0 +1,12 @@
+node_modules
+build
+dist
+cdk.out
+.cdk.staging
+coverage
+*.tsbuildinfo
+.env
+.env.*
+.DS_Store
+# ASK CLI local state
+.ask

@@ -1,0 +1,32 @@
+{
+  "name": "gnl-books",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A private reading tracker for the family.",
+  "workspaces": [
+    "infra",
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agiannell/gnl-books.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/agiannell/gnl-books/issues"
+  },
+  "homepage": "https://github.com/agiannell/gnl-books#readme",
+  "devDependencies": {
+    "@types/node": "24",
+    "typescript": "~6.0.3",
+    "vitest": "^5.1.0"
+  }
+}
