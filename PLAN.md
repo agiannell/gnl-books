@@ -18,7 +18,7 @@ Their **CSV import still works**, so that's the migration path, and it's a stron
 
 - **Custom skills are alive.** Alexa+ added AI-native SDKs (Action, Web Action, Multi-Agent) but classic ASK custom skills remain supported, and nothing skill-, widget-, personalization-, or account-linking-related is on the deprecated list. Recent removals are unrelated (Routines Kit, Smart Home API v2).
 - **No certification needed.** A skill left in **development stage** runs on devices registered to the same Amazon account as the developer account. No store listing, no privacy policy, and none of the Kids-category restrictions that would otherwise forbid account linking in a child-directed skill.
-- **Alexa already knows which kid is talking.** `context.System.person.personId` is GA: once each family member has a voice profile, every request carries a stable per-person ID. *"Alexa, tell Family Library I read thirty pages"* resolves to the right child from any Echo in the house. This is the single best feature available here and the design is built around it.
+- **Alexa can, in principle, tell who is talking.** `context.System.person.personId` is documented as GA: with a Voice ID and Personalize skills enabled, requests carry a stable per-person ID. *Unverified in practice* — the spike's adult-profile test reported no `person` object, so this is an optimization to confirm, not a foundation. See "Spike results" below.
 - **Widgets are real but the riskiest piece.** Third-party widgets are supported and survived the Alexa+ home-screen redesign, but they use a *subset* of APL, must be associated with a skill, and are updated through the **Data Store REST API** rather than normal skill responses — a genuinely different programming model. Treated below as a spike, not a v1 promise.
 
 **The architectural consequence:** three clients (web, voice, widget) share one dataset, so this needs a **real shared API**. That's the concrete reason to break from the `gnl-lambdas` shape, where Next.js Server Components read DynamoDB directly — a pattern that cannot extend to a Lambda-hosted skill and a Data Store-fed widget.
@@ -34,7 +34,7 @@ Their **CSV import still works**, so that's the migration path, and it's a stron
 | Frontend | **Vite + React Router v7 SPA** on S3 + CloudFront |
 | Auth | **Cognito** user pool — web sign-in *and* Alexa account linking (OAuth2) |
 | Book metadata | **Hardcover GraphQL**, behind a swappable `BookSource` interface |
-| Voice | ASK custom skill (development stage), `personId` → profile |
+| Voice | ASK custom skill (development stage) on **shared adult-profile devices only**; reader resolved by `personId` if available, otherwise "who's reading?" |
 | v1 scope | Shelves + ratings + reviews · progress + yearly goals · per-person Goodreads CSV export · Alexa voice logging |
 | Out of v1 | Family activity feed, barcode scanning, recommendations |
 
@@ -139,13 +139,14 @@ create table shelf_entries (
 );
 create unique index shelf_entries_profile_book_idx on shelf_entries (profile_id, book_id);
 
--- Bedroom Echo Dots: device → whose room it's in.
--- deviceId is unique per (skill, user), so it's safe as a PK within this one skill.
+-- Optional: labels shared Echo devices ("Kitchen", "Show 15"). Not used to
+-- resolve the reader — shared devices can't identify who is speaking.
+-- deviceId is regenerated if the skill is disabled and re-enabled, so rows can go stale.
 create table alexa_devices (
   device_id text primary key,
   family_id uuid not null references families(id) on delete cascade,
-  profile_id uuid references profiles(id) on delete set null,
-  label text,                           -- "Maya's room"
+  profile_id uuid references profiles(id) on delete set null,  -- normally null
+  label text,                           -- "Kitchen"
   last_seen_at timestamptz not null default now()
 );
 
@@ -247,19 +248,32 @@ One user pool. **Adults get Cognito accounts; kids don't** — they're profiles 
 
 Request flow: no `accessToken` → return a `LinkAccountCard`. Otherwise verify the Cognito token → `familyId`, then resolve *who is speaking*.
 
-### Identifying the reader — a three-step chain
+### Spike results (2026-11-03)
 
-This is the heart of the voice design, and no single signal is sufficient:
+A throwaway "Reading Check" skill was built in the developer console and tested on real devices:
 
-1. **`context.System.person.personId`** — the voice profile. Best signal when present: it works from any device in the house and survives someone wandering into the kitchen.
-2. **`context.System.device.deviceId`** — looked up in `alexa_devices`. Each kid has their own Dot in their bedroom, so the device *is* the identity. This is likely the **primary** path for the kids (see below), not merely a fallback.
-3. **Ask once per session** — *"Who's reading?"* — and cache the answer in session attributes so it's asked at most once per conversation.
+| Test | Result |
+|---|---|
+| Developer console simulator | Works. No `person` object (expected — the simulator has no voice profile) |
+| Developer and Echo accounts match | Yes — the skill appears under *Your Skills → Dev* in the Alexa app |
+| Adult-profile Echo | **Skill launches.** Reported no `person` object (see "personId" below) |
+| Kid's bedroom Dot (Amazon Kids mode) | **Skill is not invokable** — Alexa gives its generic "I don't know how to help with that" |
+| Parent Dashboard → child profile → *Manage Apps and Content* | Lists Amazon's catalog of published kid-eligible skills (all off by default). Reading Check was not seen in the screenshots reviewed; skills are not searchable there |
 
-**Why step 2 may matter more than step 1 for the kids:** creating an Alexa voice ID for a child automatically switches that device into **Amazon Kids mode**, and Amazon's personalization docs never confirm that `personId` is delivered for child profiles — they only state the (inapplicable) rule that *child-directed* skills can't use personalization. Our skill is never published and never categorized as a Kid Skill, so the policy doesn't bind us, but the behavior is unverified. A bedroom Dot mapped by `deviceId` sidesteps the question entirely.
+**Decision: voice is a shared-device feature.** Kids' bedroom Dots stay in Amazon Kids mode and do not run this skill. Voice logging happens on adult-profile devices (kitchen Echo, Echo Show 15). Taking bedroom Dots out of Kids mode, or beta-testing the skill into the kids' approval list, were considered and rejected — the first removes protections the family set up deliberately, the second is unverified.
 
-**Amazon Kids is not a blocker.** Parents approve specific third-party skills through the Parent Dashboard at `parents.amazon.com`, so a kid's Dot can invoke this skill. Whether a *development-stage* skill surfaces there is the one thing to verify hands-on early.
+### Identifying the reader on a shared device
 
-**`deviceId` is re-pairable, not permanent** — it's regenerated if the skill is disabled and re-enabled. So treat the mapping as something that can go stale: when an unknown `deviceId` appears, upsert it into `alexa_devices` with `last_seen_at` and fall through to step 3. `/settings` then lists recently-seen unmapped devices and person IDs for a parent to assign, which is the same UI for both. (Worth investigating whether `persistentEndpointId` is exposed here and is more stable — it would simplify this.)
+The shared device cannot identify the reader, so the skill has to:
+
+1. **`context.System.person.personId`** — when present, map it to a profile via `profiles.alexa_person_id`.
+2. **Ask once per session** — *"Who's reading?"* — and cache the answer in session attributes so it's asked at most once per conversation. This is the guaranteed path and the one to build first.
+
+**`personId` status: unresolved.** The adult-profile Echo reported no `person` object. Amazon only sends `personId` when the speaker has a **Voice ID** and **Personalize skills** is enabled, so this may be setup rather than a limitation — retest after confirming both. Until verified, treat "ask who's reading" as the primary path and `personId` as an optimization.
+
+**Unmapped is the safe default.** Writing a kid's progress to the wrong sibling is the one error that would actually upset someone, so an unrecognized speaker always falls through to asking rather than guessing.
+
+**`alexa_devices` is demoted.** With bedroom Dots out of scope, `deviceId` no longer identifies a reader, since shared devices are shared. The table is now optional: it can label devices ("Kitchen", "Show 15") and track `last_seen_at`, but it is not part of reader resolution. `profile_id` can stay null.
 
 Intents:
 
@@ -383,7 +397,7 @@ Ordered so the app is genuinely useful partway through, and the risky parts come
 5. **Hardcover `BookSource`** — search, add to shelf, book caching, manual add.
 6. **Shelves** — ratings, reviews, dates, progress, goals in the SPA.
 7. **CSV export** — and immediately validate a real import (see below).
-8. **Alexa skill** — account linking, the `personId` → `deviceId` → ask resolution chain, the seven intents.
+8. **Alexa skill** — account linking, reader resolution (`personId` if present, else ask), the seven intents, on shared devices only.
 9. **Widget spike** → only then the real widget.
 
 **The app is worth using after step 7 even if 8 and 9 never happen.** Given five unfamiliar technologies in one project, that ordering is the main defense against stalling at 70%.
@@ -416,14 +430,18 @@ Deliberately force a concurrent write conflict to prove `withRetry()` actually h
 
 **CSV — the acceptance test that matters.** Export, then create a throwaway Goodreads account and import the file at `goodreads.com/review/import`. Confirm titles, ratings, shelves, and reviews all land. *This is the entire premise of the project — validate it at step 7, not months later.*
 
-**Alexa** — do steps 1–2 as an early spike, before building the intents:
+**Alexa** — the early spike is done (see "Spike results"). One open item remains, then the checks below apply at step 8:
+
+*Still open:* confirm whether `personId` arrives on the adult Echo once a **Voice ID** exists and **Personalize skills** is enabled. Log the raw request envelope (`ENVELOPE` in CloudWatch) and check `context.System.person`.
+
+At step 8, on a shared device (kitchen Echo / Show 15):
 1. Link the account in the Alexa app (the skill shows in **Skills & Games** with a development badge).
-2. **Verify the development-stage skill can be approved for the kids' profiles** in the Parent Dashboard at `parents.amazon.com`, and that it's invokable from a bedroom Dot in Amazon Kids mode. *This is the one real unknown in the voice design* — if it fails, voice becomes a shared-device feature (kitchen Echo / Show 15) rather than a bedroom one, which is a scope change worth knowing about on day one rather than at step 8.
-3. Log the raw request envelope from a kid's Dot and check **whether `context.System.person.personId` is present** for a child voice profile. This determines whether the kids resolve by voice or by device.
-4. From a bedroom Dot: *"Alexa, tell Family Library I read thirty pages."* Confirm a `progress_events` row with `source = 'alexa'` and the **correct `profile_id`**, without anyone saying their name.
+2. *"Alexa, tell Family Library I read thirty pages."* With no recognized speaker, it should ask *"Who's reading?"*. Answer, and confirm a `progress_events` row with `source = 'alexa'` and the **correct `profile_id`**.
+3. Say a second sentence in the same session; it should **not** ask again (session attribute cached).
+4. Start a new session as a different child; it should ask again and write to the other profile.
 5. *"Alexa, ask Family Library what I'm reading"* and *"...how am I doing on my goal?"*
-6. Repeat from a different child's room; confirm it writes to a different profile.
-7. Disable and re-enable the skill, then confirm the stale `deviceId` is handled gracefully — it should ask "who's reading?" and let a parent re-map, not crash or write to the wrong child.
+6. If `personId` is working, repeat step 2 and confirm the skill skips the question and resolves the profile from voice alone.
+7. Answer *"Who's reading?"* with a name that isn't a profile; it should re-ask, not create or guess.
 
 **Widget** — hello-world renders in the Widget Gallery on the Show 15 before any real widget work begins.
 
@@ -435,9 +453,9 @@ Deliberately force a concurrent write conflict to prove `withRetry()` actually h
 - **Apollo's two entry points** (Lambda vs standalone) can drift. Keeping the schema and all resolver logic in `schema.ts`, with both entry points as thin wrappers, is the discipline that prevents "works locally, breaks deployed."
 - **DSQL optimistic concurrency.** Forgetting retry logic produces rare, confusing failures under concurrent writes. The `withRetry()` wrapper must be the only way `core` opens a transaction.
 - **DSQL migration constraints** — one DDL per transaction, DDL separate from DML, `OC001` retries expected. The runner has to be built for this from the start.
-- **`personId` may never arrive for child profiles.** Unverified in Amazon's docs, and a kid's voice ID forces the device into Amazon Kids mode. Mitigated by the `deviceId` chain — bedroom Dots identify their owner regardless — with "who's reading?" as the final fallback.
-- **Development-stage skill availability under Amazon Kids** is the single genuine unknown in the voice design. Verify it in week one (verification step 2), because a failure there changes voice from a bedroom feature to a shared-device one.
-- **`deviceId` is regenerated when a skill is disabled and re-enabled**, so device mappings can silently go stale. Unknown devices must fall through to asking rather than guessing — writing a kid's progress to the wrong sibling is the one error that would actually upset someone.
+- **Voice is limited to shared adult-profile devices.** The spike confirmed a development-stage skill is not invokable from Amazon Kids-mode bedroom Dots. Kids can still use voice on the kitchen Echo and Show 15, but not from their own rooms.
+- **`personId` may not arrive at all.** The adult Echo reported no `person` object. If it stays that way after Voice ID and Personalize skills are confirmed, every voice session starts with "Who's reading?" — workable, but clunkier. The design treats asking as the primary path so this is a degradation, not a failure.
+- **Never guess the reader.** Writing a kid's progress to the wrong sibling is the one error that would actually upset someone, so an unrecognized speaker always falls through to asking.
 - **Widget Data Store API** is the least-documented surface here; the spike exists to find out early.
 - **Hardcover PAT expiry** — choose a long expiry and note the date. An expired token breaks search while cached books keep working, which is a confusing failure mode; surface a clear error in the UI.
 - **Goodreads could change or drop CSV import.** Low likelihood, but it's the project's load-bearing assumption — hence validating a real import early.
