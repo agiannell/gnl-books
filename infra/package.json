@@ -1,0 +1,19 @@
+{
+  "name": "@gnl-books/infra",
+  "version": "0.1.0",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "typecheck": "tsc --noEmit",
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.1147.0",
+    "tsx": "^4.23.0"
+  },
+  "dependencies": {
+    "@aws-cdk/aws-dsql-alpha": "^2.275.0-alpha.0",
+    "aws-cdk-lib": "^2.275.0",
+    "constructs": "^10.5.0"
+  }
+}
