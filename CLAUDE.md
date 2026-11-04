@@ -12,14 +12,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Node 24 (`.nvmrc`), Yarn 1.22 classic. Run from the repo root.
 
 ```bash
-yarn typecheck                                # tsc --noEmit (deliberately not `tsc -b`)
-yarn test                                     # vitest run, all workspaces
+yarn typecheck                                # root tsc --noEmit, then `yarn workspaces run typecheck` (deliberately not `tsc -b`)
+yarn test                                     # vitest run, all projects
+yarn test --project infra                     # one project
 yarn test:watch
-yarn vitest run packages/core/test/foo.test.ts            # single file
-yarn vitest run packages/core/test/foo.test.ts -t "name"  # single test
+yarn vitest run infra/test/foo.test.ts                    # single file
+yarn vitest run infra/test/foo.test.ts -t "name"          # single test
 ```
 
-Vitest only picks up `infra/test/**/*.test.ts` and `packages/*/test/**/*.test.ts`. There is no lint script yet.
+Run tests from the repo root only. Projects are defined inline in the root `vitest.config.mts` (`infra` has the CDK cleanup setup file; `packages` is node-only). Running Vitest from inside a workspace finds no config and silently drops the setup file and timeout, so workspaces have no `test` script. Every workspace needs a `typecheck` script, or the root `yarn workspaces run typecheck` errors. `vitest run` exits 1 when a project has no tests yet. There is no lint script yet.
 
 ## Architecture (big picture)
 
@@ -43,7 +44,9 @@ A family reading tracker with three clients (web SPA, Alexa skill, Echo Show wid
 ## Working conventions
 
 - Install with `yarn add`; initialize with the ecosystem's own tool (`cdk init`, `create-react-router`, `ask new`). Don't hand-type version ranges into `package.json`. Use `npm init` for a bare manifest, not `yarn init`.
-- Pins that are deliberate: TypeScript `~6.0.3` (fallback `~5.9.x` if tools complain; 7 is unconfirmed), `@types/node` 24 to match the Node 24 Lambda runtime. Say why when pinning on purpose.
+- Pins that are deliberate: TypeScript `~6.0.3` (fallback `~5.9.x` if tools complain; 7 is unconfirmed and has proven incompatible in practice), `@types/node` 24 to match the Node 24 Lambda runtime. Say why when pinning on purpose.
+- One TypeScript version across the whole repo, owned by the root `package.json`. Scaffolders (`cdk init`, `create-react-router`) pin their own, often 7: remove `typescript` and `@types/node` from the workspace after generating it, so there is no second copy. Verify with `yarn why typescript` or `grep '^"\?typescript@' yarn.lock`.
+- Vitest is the test runner in every workspace, including `infra` (the CDK template's Jest is removed). Vitest 5 needs `vite` as a devDependency, which Yarn classic doesn't install for you.
 - Write files with the Write/Edit tools, never Bash heredocs or redirects, one file per call, with a short what/why above each change.
 - The repo is public: keep AWS account IDs, hosted-zone IDs, and personal details out of committed files. Use the `<AWS_ACCOUNT_ID>` / `<HOSTED_ZONE_ID>` placeholders; real values come from the deploy environment and `cdk.context.json`.
 - Ask before outward-facing actions (pushing, creating remote resources, deploying).

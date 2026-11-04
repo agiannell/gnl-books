@@ -15,14 +15,16 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 - [x] Root scaffold: `.nvmrc`, `.npmrc`, `.gitignore`, `package.json`, tsconfigs, `vitest.config.ts`
 - [x] `CLAUDE.md`
-- [ ] Commit the scaffold, `CLAUDE.md`, and the `PLAN.md` / `CONTEXT.md` voice-finding edits
-- [ ] CI: `.github/workflows/`, OIDC role `github-deploy`, typecheck + test on PR
+- [x] Commit the scaffold, `CLAUDE.md`, and the `PLAN.md` / `CONTEXT.md` voice-finding edits (pushed)
+- [ ] CI: `.github/workflows/`, OIDC role `github-deploy`, typecheck + test on PR. `vitest run` exits 1 when no tests exist, so account for that until each workspace has some
 
 ## 1 — Infra skeleton
 
-- [ ] `infra` workspace via `cdk init`, then swap Jest for Vitest
-- [ ] **Decide:** does `aws-cdk-lib` (2.275.x) have an L1/L2 construct for Aurora DSQL? If not, `CfnCluster` or a custom resource. Do this before writing the stack
-- [ ] DSQL cluster, `RemovalPolicy.RETAIN`
+- [x] `infra` workspace via `cdk init`, Jest swapped for Vitest (one shared runner, per-project config inline in the root `vitest.config.mts`; `jest-autoclean` replaced by `infra/test/setup.ts`). Typecheck, test and `cdk synth` all pass
+- [ ] Each new workspace needs a `typecheck` script (the root runs `yarn workspaces run typecheck`, which errors if one is missing) and, for `packages/web`, its own entry in the root `projects` plus an exclusion from the `packages` glob
+- [x] **Decided:** `aws-cdk-lib` 2.275.0 has only the L1 `CfnCluster`, but `@aws-cdk/aws-dsql-alpha` has an L2 `Cluster` (experimental). Using the alpha: `yarn add @aws-cdk/aws-dsql-alpha`, kept matched to `aws-cdk-lib`
+- [ ] DSQL cluster via the alpha `Cluster`. **Pass `removalPolicy: RETAIN` and `deletionProtection: true` explicitly.** The alpha only defaults deletion protection to true when the `removalPolicy` prop itself is passed; with no prop you get `DeletionPolicy: Retain` but no `DeletionProtectionEnabled` in the template (found in a spike; the docs imply otherwise). Assert both in a `Template` test
+- [ ] Run `cdk diff` before every deploy and look for a replacement of `AWS::DSQL::Cluster`, the one failure an alpha API change could cause
 - [ ] S3 + CloudFront (OAC), 403/404 → `/index.html`
 - [ ] Route 53 record for `books.gnlfamily.com` + ACM cert (us-east-1 for CloudFront)
 - [ ] Placeholder SPA deploys and loads over HTTPS
@@ -100,7 +102,6 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 ## Open questions
 
 - [ ] React Router v7 vs 8 (blocks step 6)
-- [ ] Aurora DSQL construct support in `aws-cdk-lib` (blocks step 1)
 - [ ] Echo Show 15 widget feasibility (that's what step 8's spike is for)
 - [ ] Confirm in CloudWatch that a Kids-mode refusal never reaches the Lambda — expected, low stakes
 - [ ] Whether a development-stage skill needs a privacy policy URL for `personId` (not needed in the spike; publishing would require one)
@@ -110,5 +111,6 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - Voice is adult-only. A child got the generic refusal on an adult-profile Dot; an adult saying the same phrase on the same Dot was recognized, with `personId` and `deviceId` present
 - `personId` works for adults once the skill declares Skills Personalization
 - `alexa_devices` is demoted to labelling only — not part of reader resolution
+- DSQL in CDK: use the alpha L2 `Cluster` from `@aws-cdk/aws-dsql-alpha`. It provides `grantConnect` / `grantConnectAdmin` and defaults to Retain. Still open for step 2: which grant the app Lambdas get, and how DSQL custom database roles work
 - No Goodreads API. CSV export is the migration path
 - TypeScript held at `~6.0.3`; `@types/node` pinned to 24 to match the Lambda runtime
