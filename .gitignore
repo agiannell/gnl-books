@@ -3,6 +3,8 @@ build
 dist
 cdk.out
 .cdk.staging
+# Written by context lookups (e.g. the hosted zone); its keys contain the AWS account ID
+cdk.context.json
 coverage
 *.tsbuildinfo
 .env

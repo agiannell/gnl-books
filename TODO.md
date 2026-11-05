@@ -25,8 +25,8 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] **Decided:** `aws-cdk-lib` 2.275.0 has only the L1 `CfnCluster`, but `@aws-cdk/aws-dsql-alpha` has an L2 `Cluster` (experimental). Using the alpha: `yarn add @aws-cdk/aws-dsql-alpha`, kept matched to `aws-cdk-lib`
 - [x] DSQL cluster via the alpha `Cluster`, with `Template` tests for the retain policy, deletion protection and name. **Passed `removalPolicy: RETAIN` and `deletionProtection: true` explicitly.** The alpha only defaults deletion protection to true when the `removalPolicy` prop itself is passed; with no prop you get `DeletionPolicy: Retain` but no `DeletionProtectionEnabled` in the template (found in a spike; the docs imply otherwise). Assert both in a `Template` test
 - [ ] Run `cdk diff` before every deploy and look for a replacement of `AWS::DSQL::Cluster`, the one failure an alpha API change could cause
-- [ ] S3 + CloudFront (OAC), 403/404 → `/index.html`
-- [ ] Route 53 record for `books.gnlfamily.com` + ACM cert (us-east-1 for CloudFront)
+- [x] S3 + CloudFront (OAC). SPA routing is a per-behavior CloudFront Function (extensionless paths → `/index.html`), not distribution-wide 403/404 error responses, so the `/graphql` origin added in step 4 never has its errors rewritten into HTML
+- [x] A and AAAA records for `books.gnlfamily.com` (zone via `HostedZone.fromLookup`) + ACM cert in us-east-1 via `DnsValidatedCertificate`. It is deprecated and CDK says it will be removed in the next major release; it is isolated in one place in `lib/gnl-books-stack.ts`. Revisit when CDK v3 lands, or bootstrap us-east-1 and use a cross-region `Certificate` stack (documented by CDK, but marked experimental)
 - [ ] Placeholder SPA deploys and loads over HTTPS
 - [ ] `cdk synth` green in CI
 

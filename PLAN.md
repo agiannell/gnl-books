@@ -65,7 +65,7 @@ gnl-books/
 
 Conventions worth carrying over from `gnl-lambdas`: `.nvmrc` → `24`, `.npmrc` pinning `registry=https://registry.npmjs.org/` (the JFrog gotcha), `NodejsFunction` with no bundling config, grant-based IAM, `RemovalPolicy.RETAIN` on stateful resources, and CI copied from `.github/workflows/` using the existing OIDC role `arn:aws:iam::<AWS_ACCOUNT_ID>:role/github-deploy`.
 
-> Account-specific identifiers (`<AWS_ACCOUNT_ID>`, `<HOSTED_ZONE_ID>`) are placeholders. Real values come from the deploy environment and `cdk.context.json`, not from this document.
+> Account-specific identifiers (`<AWS_ACCOUNT_ID>`, `<HOSTED_ZONE_ID>`) are placeholders. Real values come from the deploy environment, not from this document or the repo: the account from `CDK_DEFAULT_ACCOUNT`, and the hosted zone from `HostedZone.fromLookup` by domain name. The lookup caches into `cdk.context.json`, which is gitignored because its keys contain the account ID.
 
 **Testing moves to Vitest** (not Mocha) — it's native to the Vite toolchain, handles ESM/TS without ceremony, and works for React component tests too.
 
@@ -378,7 +378,7 @@ Rules in `packages/core/csv.ts`:
 
 ## Web app — `packages/web`
 
-Vite + **React Router v7** in framework mode with `ssr: false` → static build → S3, fronted by CloudFront with OAC. 403/404 rewrite to `/index.html` so client-side routing works.
+Vite + **React Router v7** in framework mode with `ssr: false` → static build → S3, fronted by CloudFront with OAC. A CloudFront Function on the default behavior serves `/index.html` for paths without a file extension, so client-side routing works. It is deliberately not distribution-wide 403/404 error responses, which would also rewrite errors from the `/graphql` origin into HTML.
 
 - **Apollo Client**, paired with the Apollo Server choice — normalized cache, and the client most teams actually use. Typed hooks come from **`graphql-codegen`** (`client-preset`, or `typescript-react-apollo` for generated hooks). This is where the GraphQL learning really lands — end-to-end type safety from Postgres column to React prop.
 - `react-oidc-context` for Cognito Hosted UI + PKCE.
