@@ -17,7 +17,7 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] `CLAUDE.md`
 - [x] Commit the scaffold, `CLAUDE.md`, and the `PLAN.md` / `CONTEXT.md` voice-finding edits (pushed)
 - [x] CI `test.yml` (push and PR to `main`): install, typecheck, test, and a real `cdk synth` including the esbuild bundle. Verified locally with no AWS credentials, using a fake `cdk.context.json` the workflow writes, then green on GitHub (PR #1): 40 tests passed, the live ones skipped, and the synth really bundled the runner. The first run failed on a `401` from a private mirror in `yarn.lock`; fixed with a project `.yarnrc`, rewritten lockfile URLs, and a CI guard for non-public hosts
-- [ ] CI `deploy.yml` (manual, `environment: production`, OIDC). Written but **untested**, and it needs the repo secret `AWS_DEPLOY_ROLE_ARN`. The existing `github-deploy` role already trusts `repo:agiannell/*`, but its own permissions are scoped to `GnlLambdasStack` and it can assume the `cdk-*-us-west-2` bootstrap roles, so whether it can deploy `GnlBooksStack` is unconfirmed until a run
+- [x] CI `deploy.yml` (manual, `environment: production`, OIDC, repo secret `AWS_DEPLOY_ROLE_ARN`). Verified with a manual run: typecheck, tests, `cdk diff` ("no differences") and `cdk deploy` all passed, so the shared `github-deploy` role can deploy `GnlBooksStack` through the `cdk-*-us-west-2` bootstrap roles. The first attempt failed because the secret had not been set yet. Still untested: a deploy that applies a *new* migration
 - [ ] Consider tightening `github-deploy`'s trust from `repo:agiannell/*` to the specific repos or environments. It is shared with other projects, so that is your call
 
 ## 1 — Infra skeleton
