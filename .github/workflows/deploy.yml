@@ -1,0 +1,40 @@
+name: Deploy
+
+# Manual only. Deploys change the AWS account, so nothing deploys on push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn typecheck
+      - run: yarn test
+      # The role ARN contains the account ID, and this repo is public, so it
+      # lives in a repository secret rather than in this file.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-west-2
+      # Printed so the log shows what the deploy changes, including any
+      # replacement of the DSQL cluster.
+      - name: cdk diff
+        run: yarn cdk diff
+        working-directory: infra
+      - name: cdk deploy
+        run: yarn cdk deploy --require-approval never
+        working-directory: infra

@@ -1,0 +1,40 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn typecheck
+      - run: yarn test
+      # A real synth, including the esbuild bundle of the migration runner, with
+      # no AWS access. The hosted-zone lookup is answered from a fake context
+      # for a fake account, so nothing here touches the real account.
+      - name: Seed a fake hosted-zone lookup
+        run: |
+          echo '{"hosted-zone:account=111111111111:domainName=gnlfamily.com:region=us-west-2":{"Id":"/hostedzone/ZFAKE","Name":"gnlfamily.com."}}' > cdk.context.json
+        working-directory: infra
+      - name: cdk synth
+        run: yarn cdk synth --quiet
+        working-directory: infra
+        env:
+          CDK_DEFAULT_ACCOUNT: '111111111111'
