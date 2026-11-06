@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib/core';
 import * as dsql from '@aws-cdk/aws-dsql-alpha';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -15,9 +16,14 @@ import { Construct } from 'constructs';
 
 const ZONE_NAME = 'gnlfamily.com';
 const SITE_DOMAIN = 'books.gnlfamily.com';
+const AUTH_DOMAIN_PREFIX = 'gnl-books';
+// Vite's default dev-server origin, which `create-react-router` uses.
+const LOCAL_DEV_URL = 'http://localhost:5173';
 
 export class GnlBooksStack extends cdk.Stack {
   readonly cluster: dsql.Cluster;
+  readonly userPool: cognito.UserPool;
+  readonly webClient: cognito.UserPoolClient;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -136,6 +142,49 @@ export class GnlBooksStack extends cdk.Stack {
       distributionPaths: ['/*'],
     });
 
+    // Auth. Adults sign in here; kids are profiles, not Cognito users.
+    this.userPool = new cognito.UserPool(this, 'UserPool', {
+      userPoolName: 'gnl-books',
+      // Two adults, added by hand (`aws cognito-idp admin-create-user`). Open
+      // sign-up on a public URL would let anyone create a family.
+      selfSignUpEnabled: false,
+      signInAliases: { email: true },
+      autoVerify: { email: true },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      // The users are the data, so a stack teardown must not delete them.
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      deletionProtection: true,
+    });
+
+    // Hosted UI. A Cognito-owned prefix domain: a custom domain would need
+    // another us-east-1 certificate for no benefit at family scale. The prefix
+    // is unique per region, so the first deploy fails if someone else has it.
+    const userPoolDomain = this.userPool.addDomain('HostedUiDomain', {
+      cognitoDomain: { domainPrefix: AUTH_DOMAIN_PREFIX },
+    });
+
+    // The SPA is a public client: authorization code + PKCE, no secret. The
+    // Alexa account-linking client (build step 9) is a separate confidential
+    // client with Amazon's redirect URLs.
+    this.webClient = this.userPool.addClient('WebClient', {
+      userPoolClientName: 'web',
+      generateSecret: false,
+      oAuth: {
+        flows: { authorizationCodeGrant: true },
+        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
+        callbackUrls: [`https://${SITE_DOMAIN}`, LOCAL_DEV_URL],
+        logoutUrls: [`https://${SITE_DOMAIN}`, LOCAL_DEV_URL],
+      },
+      // Long-lived so the family tablet stays signed in; revocation stays on so
+      // a lost device can still be cut off.
+      refreshTokenValidity: cdk.Duration.days(365),
+      enableTokenRevocation: true,
+      preventUserExistenceErrors: true,
+    });
+
     new cdk.CfnOutput(this, 'SiteUrl', { value: `https://${SITE_DOMAIN}` });
+    new cdk.CfnOutput(this, 'UserPoolId', { value: this.userPool.userPoolId });
+    new cdk.CfnOutput(this, 'WebClientId', { value: this.webClient.userPoolClientId });
+    new cdk.CfnOutput(this, 'HostedUiUrl', { value: userPoolDomain.baseUrl() });
   }
 }

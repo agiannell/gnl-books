@@ -48,7 +48,8 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 ## 3 — Cognito
 
-- [ ] User pool + Hosted UI, PKCE, long refresh tokens (up to 3650 days — short expiry silently breaks the Alexa link later)
+- [x] User pool + Hosted UI + web client in CDK (`gnl-books-stack.ts`, 7 `Template` tests, `cdk diff` only adds resources). Admin-created users only (no self sign-up), email sign-in, pool retained with deletion protection, `gnl-books` Cognito prefix domain, public PKCE client with 365-day revocable refresh tokens, callbacks limited to the site and `localhost:5173`. **Written, not deployed.** The Alexa client (step 9) is separate and needs the 3650-day refresh token, since a short expiry silently breaks the link later
+- [ ] After the deploy: create the two adult users with `admin-create-user`, and confirm the prefix domain was not already taken
 - [ ] `react-oidc-context` sign-in in the SPA
 - [ ] First-run bootstrap: first user with no `accounts` row creates the family + parent profile, sets the PIN
 - [ ] Parent PIN: `scrypt` + `timingSafeEqual`, stored as `families.parent_pin_hash`

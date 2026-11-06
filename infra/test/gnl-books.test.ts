@@ -160,3 +160,56 @@ describe('web', () => {
     });
   });
 });
+
+describe('auth', () => {
+  it('creates one user pool that is retained and protected from deletion', () => {
+    template.resourceCountIs('AWS::Cognito::UserPool', 1);
+    template.hasResource('AWS::Cognito::UserPool', {
+      DeletionPolicy: 'Retain',
+      UpdateReplacePolicy: 'Retain',
+      Properties: { DeletionProtection: 'ACTIVE' },
+    });
+  });
+
+  it('only lets an admin create users', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPool', {
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
+    });
+  });
+
+  it('signs in by email', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPool', {
+      UsernameAttributes: ['email'],
+    });
+  });
+
+  it('serves the Hosted UI from a Cognito prefix domain', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolDomain', { Domain: 'gnl-books' });
+  });
+
+  it('gives the SPA a public PKCE client with no secret and no implicit flow', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+      ClientName: 'web',
+      GenerateSecret: false,
+      AllowedOAuthFlows: ['code'],
+      AllowedOAuthFlowsUserPoolClient: true,
+      AllowedOAuthScopes: Match.arrayWith(['openid', 'email', 'profile']),
+    });
+  });
+
+  it('only redirects back to the site and the local dev server', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+      CallbackURLs: ['https://books.gnlfamily.com', 'http://localhost:5173'],
+      LogoutURLs: ['https://books.gnlfamily.com', 'http://localhost:5173'],
+    });
+  });
+
+  it('keeps refresh tokens long-lived but revocable', () => {
+    template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
+      // CDK emits durations in minutes: 365 days.
+      RefreshTokenValidity: 365 * 24 * 60,
+      TokenValidityUnits: Match.objectLike({ RefreshToken: 'minutes' }),
+      EnableTokenRevocation: true,
+    });
+  });
+});
