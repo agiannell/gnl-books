@@ -39,7 +39,8 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
       One DDL per transaction, DDL separate from DML, retry `OC001`, `schema_migrations` table
 - [x] Migration runner (`migrate()` in `packages/core/src/migrate.ts`): one statement per file, each in its own transaction, version recorded in a second one, all idempotent. Tested against a recording fake driver. **Not yet run against the cluster**
 - [x] Migrations for the `PLAN.md` schema in `db/migrations/` (written, not yet applied). `CREATE INDEX ASYNC`, random UUIDv4 keys generated in app code. Deviations from the plan, found by checking the DSQL docs: `jsonb` instead of `text[]` (no array columns), and `NO ACTION` instead of `CASCADE` on `shelf_entries` and `progress_events` (3,000-row limit)
-- [ ] Apply the migrations to the live cluster. Confirms `default now()` / `current_date`, `jsonb` columns, inline `CHECK`, and foreign keys
+- [x] Applied the migrations to the live cluster (all 10, rerun is a no-op). Confirmed on the real cluster: `default now()` / `current_date`, `jsonb` columns, inline `CHECK` (a bad shelf value is rejected with 23514), foreign keys with the intended actions, and both async indexes. Checked inside a rolled-back transaction, so no rows were left behind
+- [ ] Parse `date` columns as plain `YYYY-MM-DD` strings in `createDb`: `pg` returns them as JS `Date`s in local time (`date_added` came back as `...T06:00:00.000Z`), which would shift days in the CSV export
 - [ ] Kysely types generated from the live schema
 - [ ] **Test:** force a concurrent write conflict and prove `withRetry()` recovers. Easy to get wrong, hard to notice later
 
