@@ -1,0 +1,21 @@
+{
+  "name": "@gnl-books/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Domain logic, Kysely queries and the DSQL connection, shared by the GraphQL and Alexa Lambdas.",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws/aurora-dsql-node-postgres-connector": "^0.1.9",
+    "kysely": "^0.29.8",
+    "pg": "^8.23.1",
+    "pg-connection-string": "^2.14.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
