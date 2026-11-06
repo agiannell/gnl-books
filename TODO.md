@@ -32,9 +32,9 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 ## 2 — Schema + `packages/core`
 
-- [ ] `packages/core` workspace
-- [ ] DSQL connection via `@aws/aurora-dsql-node-postgres-connector` (disposable connections, IAM token rotation)
-- [ ] **`withRetry()`** — the only way `core` opens a transaction; handles `40001` / `OC000` / `OC001`
+- [x] `packages/core` workspace
+- [x] DSQL connection via `@aws/aurora-dsql-node-postgres-connector` (`createDb` in `src/db.ts`). Verified live against the deployed cluster: IAM auth as `admin`, a query and a transaction both ran
+- [x] **`withRetry()` / `withTransaction()`** — the only way `core` opens a transaction. The connector reports conflicts as `error.code` `OC000` / `OC001` / `40001` (an earlier assumption that OC001 had another SQLSTATE was wrong), so `isRetryable` reuses its `isOCCError`
 - [ ] `db/migrations/` + runner Lambda on `triggers.Trigger`, `executeOnHandlerChange: true`
       One DDL per transaction, DDL separate from DML, retry `OC001`, `schema_migrations` table
 - [ ] Migrations for the `PLAN.md` schema. `CREATE INDEX ASYNC`, random UUIDv4 keys generated in app code

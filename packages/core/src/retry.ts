@@ -1,18 +1,13 @@
+import { isOCCError } from '@aws/aurora-dsql-node-postgres-connector';
+
 // Aurora DSQL uses optimistic concurrency, so a transaction can fail at commit
 // and must simply be run again. This is the single retry policy for `core`.
 //
-// OC000 (write conflict) arrives as SQLSTATE 40001. OC001 (schema changed by
-// another transaction) arrives under a different SQLSTATE with the OC code only
-// in the message, so match on either rather than on `code` alone.
-const RETRYABLE_SQLSTATES = new Set(['40001']);
-const RETRYABLE_MESSAGE = /\b(OC000|OC001)\b/;
-
-export function isRetryable(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  const { code, message } = err as { code?: unknown; message?: unknown };
-  if (typeof code === 'string' && RETRYABLE_SQLSTATES.has(code)) return true;
-  return typeof message === 'string' && RETRYABLE_MESSAGE.test(message);
-}
+// The connector's own definition of "retryable" (error.code of OC000, OC001 or
+// 40001) is reused so there is one source of truth. Its `pool.transaction()` is
+// deliberately not used: Kysely manages BEGIN/COMMIT itself, so the retry wraps
+// `db.transaction().execute()` instead (see `withTransaction` in db.ts).
+export const isRetryable = isOCCError;
 
 export interface RetryOptions {
   /** Total attempts including the first. */

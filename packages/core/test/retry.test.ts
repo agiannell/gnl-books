@@ -2,19 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { isRetryable, withRetry } from '../src/retry';
 
 const pgError = (code: string, message: string) => Object.assign(new Error(message), { code });
-const conflict = () => pgError('40001', 'change conflicts with another transaction, please retry: (OC000)');
-const schemaChanged = () => pgError('0A000', 'schema has been updated by another transaction, please retry: (OC001)');
+const conflict = () => pgError('OC000', 'change conflicts with another transaction, please retry');
+const schemaChanged = () => pgError('OC001', 'schema has been updated by another transaction, please retry');
 
 // No real waiting, and no jitter, so delays are exactly the ceiling.
 const fast = { sleep: async (_ms: number) => {}, random: () => 1 };
 
 describe('isRetryable', () => {
-  it('retries SQLSTATE 40001 (OC000)', () => {
+  it('retries OC000, OC001 and SQLSTATE 40001', () => {
     expect(isRetryable(conflict())).toBe(true);
-  });
-
-  it('retries OC001 even though its SQLSTATE is not 40001', () => {
     expect(isRetryable(schemaChanged())).toBe(true);
+    expect(isRetryable(pgError('40001', 'could not serialize access'))).toBe(true);
   });
 
   it('does not retry unrelated errors', () => {
@@ -55,7 +53,7 @@ describe('withRetry', () => {
     const fn = vi.fn(async () => {
       throw conflict();
     });
-    await expect(withRetry(fn, { ...fast, maxAttempts: 3 })).rejects.toThrow('OC000');
+    await expect(withRetry(fn, { ...fast, maxAttempts: 3 })).rejects.toMatchObject({ code: 'OC000' });
     expect(fn).toHaveBeenCalledTimes(3);
   });
 

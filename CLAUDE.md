@@ -37,7 +37,7 @@ A family reading tracker with three clients (web SPA, Alexa skill, Echo Show wid
 ### Aurora DSQL rules that shape the code
 
 - Primary keys are random UUIDv4 generated in app code, not UUIDv7 (avoids a write hotspot).
-- Concurrency is optimistic: `core` has a single `withRetry()` that handles `40001` / `OC000` / `OC001`, and it must be the only way a transaction is opened. Transaction logic must be idempotent.
+- Concurrency is optimistic: `core` opens every transaction through `withTransaction()` (`packages/core/src/db.ts`), which wraps Kysely's `db.transaction().execute()` in `withRetry()`. DSQL reports conflicts as `error.code` `OC000` / `OC001` / `40001`, and `isRetryable` reuses the connector's `isOCCError`. The connector's own `pool.transaction()` is deliberately not used, since Kysely issues its own BEGIN/COMMIT. Transaction logic must be idempotent.
 - Migrations: one DDL statement per transaction, DDL separate from DML, retry `OC001`. Use `CREATE INDEX ASYNC`. No triggers, PL/pgSQL, temp tables, or `TRUNCATE`. Max 3,000 rows modified per transaction.
 - Connect with the official `@aws/aurora-dsql-node-postgres-connector`; treat connections as disposable.
 

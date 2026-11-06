@@ -177,7 +177,7 @@ create table progress_events (
 These are real and will bite if ignored:
 
 - **Primary keys are random UUIDv4**, generated in app code. Explicitly **not** UUIDv7 — DSQL auto-partitions by key range, so time-ordered IDs create a write hotspot. Random is what you want here.
-- **Optimistic concurrency control, not locks.** Conflicts surface as `SQLSTATE 40001` / `OC000` / `OC001` at commit. `packages/core` needs a single `withRetry()` wrapper with exponential backoff around every transaction, and all transaction logic must be idempotent. This is non-negotiable, not an optimization.
+- **Optimistic concurrency control, not locks.** Conflicts surface as `SQLSTATE 40001` / `OC000` / `OC001` at commit. `packages/core` has a single `withRetry()` wrapper (exposed as `withTransaction()`) with exponential backoff around every transaction, and all transaction logic must be idempotent. This is non-negotiable, not an optimization.
 - **DDL and DML must be in separate transactions, and a transaction may contain only one DDL statement.** This shapes the migration runner.
 - **Max 3,000 rows modified per transaction.** Fine at family scale, but chunk any bulk seeding.
 - **Connections time out after 1 hour**, and IAM auth tokens default to 15 minutes. Use the official `@aws/aurora-dsql-node-postgres-connector`, which wraps `pg` and handles token generation and rotation; treat connections as disposable.
