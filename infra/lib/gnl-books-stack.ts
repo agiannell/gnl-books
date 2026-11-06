@@ -4,10 +4,13 @@ import * as dsql from '@aws-cdk/aws-dsql-alpha';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
+import * as triggers from 'aws-cdk-lib/triggers';
 import { Construct } from 'constructs';
 
 const ZONE_NAME = 'gnlfamily.com';
@@ -27,6 +30,38 @@ export class GnlBooksStack extends cdk.Stack {
       // to Retain.
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       deletionProtection: true,
+    });
+
+    // Applies db/migrations on deploy. The SQL is bundled into the function, so
+    // editing a migration changes the handler and `executeOnHandlerChange`
+    // runs it again. If it throws, the deploy fails.
+    const migrationRunner = new nodejs.NodejsFunction(this, 'MigrationRunner', {
+      entry: path.join(__dirname, '..', 'lambda', 'migrate.ts'),
+      runtime: lambda.Runtime.NODEJS_24_X,
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 256,
+      environment: { DSQL_ENDPOINT: this.cluster.clusterEndpoint },
+      bundling: {
+        // pg loads this optional native addon lazily; it is not installed.
+        externalModules: ['pg-native'],
+        commandHooks: {
+          beforeBundling: () => [],
+          beforeInstall: () => [],
+          afterBundling: (inputDir: string, outputDir: string) => [
+            `cp -R ${path.posix.join(inputDir, 'db', 'migrations')} ${path.posix.join(outputDir, 'migrations')}`,
+          ],
+        },
+      },
+      // The repo root, so `inputDir` above is where `db/` lives.
+      projectRoot: path.join(__dirname, '..', '..'),
+      depsLockFilePath: path.join(__dirname, '..', '..', 'yarn.lock'),
+    });
+    // DDL needs the admin database role.
+    this.cluster.grantConnectAdmin(migrationRunner);
+    new triggers.Trigger(this, 'MigrationTrigger', {
+      handler: migrationRunner,
+      executeOnHandlerChange: true,
+      executeAfter: [this.cluster],
     });
 
     // Web
