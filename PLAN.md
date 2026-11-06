@@ -109,7 +109,7 @@ create table books (
   source_id text,
   title text not null,
   subtitle text,
-  authors text[] not null default '{}',
+  authors jsonb not null default '[]',  -- ordered array of names; DSQL has no array column types
   isbn13 text, isbn10 text,
   pages int, publisher text, binding text,
   release_year int, original_pub_year int,
@@ -122,7 +122,7 @@ create unique index books_source_idx on books (source, source_id);
 
 create table shelf_entries (
   id uuid primary key,
-  profile_id uuid not null references profiles(id) on delete cascade,
+  profile_id uuid not null references profiles(id),  -- no cascade: see the 3,000-row limit below
   book_id   uuid not null references books(id),
   shelf text not null,                  -- 'to-read' | 'currently-reading' | 'read'
   rating smallint,                      -- 1..5, null = unrated
@@ -134,7 +134,7 @@ create table shelf_entries (
   read_count int not null default 1,
   current_page int,
   owned boolean not null default false,
-  tags text[] not null default '{}',
+  tags jsonb not null default '[]',     -- array of strings
   updated_at timestamptz not null default now()
 );
 create unique index shelf_entries_profile_book_idx on shelf_entries (profile_id, book_id);
@@ -160,7 +160,7 @@ create table reading_goals (
 -- Every "I read 30 pages" — from web, voice, or widget.
 create table progress_events (
   id uuid primary key,
-  shelf_entry_id uuid not null references shelf_entries(id) on delete cascade,
+  shelf_entry_id uuid not null references shelf_entries(id),  -- no cascade: unbounded, see below
   at timestamptz not null default now(),
   page int,
   pages_read int,
@@ -176,8 +176,12 @@ create table progress_events (
 
 These are real and will bite if ignored:
 
+- **No array column types** (arrays exist only at query runtime), so `books.authors` and `shelf_entries.tags` are `jsonb`. Filtering by tag happens in app code, which is fine at family scale.
+- **A transaction can modify at most 3,000 rows, and that includes `ON DELETE CASCADE`.** Cascade is used only where the child set is small (accounts, profiles, goals, devices). `shelf_entries` and `progress_events` are `NO ACTION`, so deleting a profile is a batched delete in app code, children first.
+- **The migrations in `db/migrations/` are one statement per file**, because DSQL allows one DDL statement per transaction. `default now()` / `current_date` are not documented as supported; the first live run is what confirms them.
+
 - **Primary keys are random UUIDv4**, generated in app code. Explicitly **not** UUIDv7 — DSQL auto-partitions by key range, so time-ordered IDs create a write hotspot. Random is what you want here.
-- **Optimistic concurrency control, not locks.** Conflicts surface as `SQLSTATE 40001` / `OC000` / `OC001` at commit. `packages/core` needs a single `withRetry()` wrapper with exponential backoff around every transaction, and all transaction logic must be idempotent. This is non-negotiable, not an optimization.
+- **Optimistic concurrency control, not locks.** Conflicts surface as `SQLSTATE 40001` / `OC000` / `OC001` at commit. `packages/core` has a single `withRetry()` wrapper (exposed as `withTransaction()`) with exponential backoff around every transaction, and all transaction logic must be idempotent. This is non-negotiable, not an optimization.
 - **DDL and DML must be in separate transactions, and a transaction may contain only one DDL statement.** This shapes the migration runner.
 - **Max 3,000 rows modified per transaction.** Fine at family scale, but chunk any bulk seeding.
 - **Connections time out after 1 hour**, and IAM auth tokens default to 15 minutes. Use the official `@aws/aurora-dsql-node-postgres-connector`, which wraps `pg` and handles token generation and rotation; treat connections as disposable.

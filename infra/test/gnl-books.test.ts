@@ -6,7 +6,10 @@ import { GnlBooksStack } from '../lib/gnl-books-stack';
 // The hosted-zone lookup needs a concrete environment. This account is a fake
 // placeholder: with no cached context CDK substitutes a dummy zone, so nothing
 // here touches AWS.
-const stack = new GnlBooksStack(new cdk.App(), 'TestStack', {
+// An empty list tells CDK not to run esbuild for the migration runner, which
+// would be slow and isn't what these tests are about.
+const app = new cdk.App({ context: { 'aws:cdk:bundling-stacks': [] } });
+const stack = new GnlBooksStack(app, 'TestStack', {
   env: { account: '111111111111', region: 'us-west-2' },
 });
 const template = Template.fromStack(stack);
@@ -39,6 +42,42 @@ describe('database', () => {
 
   it('fails a wrong assertion, so the matchers really run', () => {
     expect(() => template.resourceCountIs('AWS::DSQL::Cluster', 2)).toThrow();
+  });
+});
+
+describe('migrations', () => {
+  it('runs a Node 24 function pointed at the cluster', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs24.x',
+      Environment: {
+        Variables: Match.objectLike({ DSQL_ENDPOINT: Match.anyValue() }),
+      },
+    });
+  });
+
+  // DDL runs as the admin role, so the function needs the admin connect action.
+  it('lets the runner connect as admin, and only the runner', () => {
+    const policies = template.findResources('AWS::IAM::Policy', {
+      Properties: {
+        PolicyDocument: {
+          Statement: Match.arrayWith([Match.objectLike({ Action: 'dsql:DbConnectAdmin' })]),
+        },
+      },
+    });
+    expect(Object.keys(policies)).toHaveLength(1);
+  });
+
+  it('invokes the runner on deploy, and again whenever its code changes', () => {
+    template.resourceCountIs('Custom::Trigger', 1);
+    template.hasResourceProperties('Custom::Trigger', {
+      HandlerArn: Match.anyValue(),
+    });
+  });
+
+  it('runs the trigger only after the cluster exists', () => {
+    template.hasResource('Custom::Trigger', {
+      DependsOn: Match.arrayWith([Match.stringLikeRegexp('Cluster')]),
+    });
   });
 });
 

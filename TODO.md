@@ -16,7 +16,9 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] Root scaffold: `.nvmrc`, `.npmrc`, `.gitignore`, `package.json`, tsconfigs, `vitest.config.ts`
 - [x] `CLAUDE.md`
 - [x] Commit the scaffold, `CLAUDE.md`, and the `PLAN.md` / `CONTEXT.md` voice-finding edits (pushed)
-- [ ] CI: `.github/workflows/`, OIDC role `github-deploy`, typecheck + test on PR. `vitest run` exits 1 when no tests exist, so account for that until each workspace has some
+- [x] CI `test.yml` (push and PR to `main`): install, typecheck, test, and a real `cdk synth` including the esbuild bundle. Verified locally with no AWS credentials, using a fake `cdk.context.json` the workflow writes, then green on GitHub (PR #1): 40 tests passed, the live ones skipped, and the synth really bundled the runner. The first run failed on a `401` from a private mirror in `yarn.lock`; fixed with a project `.yarnrc`, rewritten lockfile URLs, and a CI guard for non-public hosts
+- [ ] CI `deploy.yml` (manual, `environment: production`, OIDC). Written but **untested**, and it needs the repo secret `AWS_DEPLOY_ROLE_ARN`. The existing `github-deploy` role already trusts `repo:agiannell/*`, but its own permissions are scoped to `GnlLambdasStack` and it can assume the `cdk-*-us-west-2` bootstrap roles, so whether it can deploy `GnlBooksStack` is unconfirmed until a run
+- [ ] Consider tightening `github-deploy`'s trust from `repo:agiannell/*` to the specific repos or environments. It is shared with other projects, so that is your call
 
 ## 1 — Infra skeleton
 
@@ -27,19 +29,22 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [ ] Run `cdk diff` before every deploy and look for a replacement of `AWS::DSQL::Cluster`, the one failure an alpha API change could cause
 - [x] S3 + CloudFront (OAC). SPA routing is a per-behavior CloudFront Function (extensionless paths → `/index.html`), not distribution-wide 403/404 error responses, so the `/graphql` origin added in step 4 never has its errors rewritten into HTML
 - [x] A and AAAA records for `books.gnlfamily.com` (zone via `HostedZone.fromLookup`) + ACM cert in us-east-1 via `DnsValidatedCertificate`. It is deprecated and CDK says it will be removed in the next major release; it is isolated in one place in `lib/gnl-books-stack.ts`. Revisit when CDK v3 lands, or bootstrap us-east-1 and use a cross-region `Certificate` stack (documented by CDK, but marked experimental)
-- [ ] Placeholder SPA deploys and loads over HTTPS
-- [ ] `cdk synth` green in CI
+- [x] Placeholder SPA deploys and loads over HTTPS. Deployed to the account; verified: `/` and a deep path return the page with a valid cert, `http` redirects, AAAA resolves. A missing asset (`/missing.js`) returns S3's 403 XML, not HTML
+- [x] `cdk synth` green in CI (a step in `test.yml`, no AWS access)
 
 ## 2 — Schema + `packages/core`
 
-- [ ] `packages/core` workspace
-- [ ] DSQL connection via `@aws/aurora-dsql-node-postgres-connector` (disposable connections, IAM token rotation)
-- [ ] **`withRetry()`** — the only way `core` opens a transaction; handles `40001` / `OC000` / `OC001`
-- [ ] `db/migrations/` + runner Lambda on `triggers.Trigger`, `executeOnHandlerChange: true`
-      One DDL per transaction, DDL separate from DML, retry `OC001`, `schema_migrations` table
-- [ ] Migrations for the `PLAN.md` schema. `CREATE INDEX ASYNC`, random UUIDv4 keys generated in app code
-- [ ] Kysely types generated from the live schema
-- [ ] **Test:** force a concurrent write conflict and prove `withRetry()` recovers. Easy to get wrong, hard to notice later
+- [x] `packages/core` workspace
+- [x] DSQL connection via `@aws/aurora-dsql-node-postgres-connector` (`createDb` in `src/db.ts`). Verified live against the deployed cluster: IAM auth as `admin`, a query and a transaction both ran
+- [x] **`withRetry()` / `withTransaction()`** — the only way `core` opens a transaction. The connector reports conflicts as `error.code` `OC000` / `OC001` / `40001` (an earlier assumption that OC001 had another SQLSTATE was wrong), so `isRetryable` reuses its `isOCCError`
+- [x] Runner Lambda (`infra/lambda/migrate.ts`) on `triggers.Trigger`, `executeOnHandlerChange: true`, admin connect grant, SQL bundled next to the handler. Verified: stack and handler tests, a real `cdk synth` bundle (loads, exports the handler, contains all 10 migrations), and a `cdk diff` that only adds resources. **Not deployed yet.** The first deploy should log "schema is up to date", since the database is already migrated
+- [x] Deployed the runner. Its CloudWatch log shows the Lambda connected to DSQL with its own execution role (IAM auth from inside AWS) and logged "schema is up to date" in about 0.8 s. Still untested: a deploy that applies a *new* migration. The first real migration after this will be that test, so read the log then
+- [x] Migration runner (`migrate()` in `packages/core/src/migrate.ts`): one statement per file, each in its own transaction, version recorded in a second one, all idempotent. Tested against a recording fake driver. **Not yet run against the cluster**
+- [x] Migrations for the `PLAN.md` schema in `db/migrations/` (written, not yet applied). `CREATE INDEX ASYNC`, random UUIDv4 keys generated in app code. Deviations from the plan, found by checking the DSQL docs: `jsonb` instead of `text[]` (no array columns), and `NO ACTION` instead of `CASCADE` on `shelf_entries` and `progress_events` (3,000-row limit)
+- [x] Applied the migrations to the live cluster (all 10, rerun is a no-op). Confirmed on the real cluster: `default now()` / `current_date`, `jsonb` columns, inline `CHECK` (a bad shelf value is rejected with 23514), foreign keys with the intended actions, and both async indexes. Checked inside a rolled-back transaction, so no rows were left behind
+- [x] `date` columns parse as plain `YYYY-MM-DD` strings (`typeParsers` in `createDb`): `pg` returns them as JS `Date`s in local time (`date_added` came back as `...T06:00:00.000Z`), which would shift days in the CSV export
+- [x] Kysely types generated from the live schema (`packages/core/src/schema.ts` via `kysely-codegen`, command in `CLAUDE.md`). `sys.*` tables excluded; `shelf` and the `source` columns are exact unions matching their `CHECK`s; `jsonb` columns write as JSON text and read as `string[]`. Compile-time checks in `test/schema.test.ts`. Regenerate after every migration
+- [x] **Test:** force a concurrent write conflict and prove `withTransaction()` recovers (`packages/core/test/withTransaction.live.test.ts`, skipped unless `DSQL_ENDPOINT` is set). Verified live: five writers race on one row; with plain Kysely some fail with a retryable code, with `withTransaction` all five land and the counter is exactly 5
 
 ## 3 — Cognito
 

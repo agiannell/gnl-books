@@ -1,0 +1,48 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+      # A developer's ~/.yarnrc can point at a private mirror, which then ends
+      # up in yarn.lock where CI (and this public repo) can't use it.
+      - name: yarn.lock only uses the public registry
+        run: |
+          if grep -E 'resolved "https?://' yarn.lock | grep -vE 'resolved "https://registry\.(npmjs\.org|yarnpkg\.com)/'; then
+            echo '::error::yarn.lock has a resolved URL outside the public registry (listed above)'
+            exit 1
+          fi
+      - run: yarn install --frozen-lockfile
+      - run: yarn typecheck
+      - run: yarn test
+      # A real synth, including the esbuild bundle of the migration runner, with
+      # no AWS access. The hosted-zone lookup is answered from a fake context
+      # for a fake account, so nothing here touches the real account.
+      - name: Seed a fake hosted-zone lookup
+        run: |
+          echo '{"hosted-zone:account=111111111111:domainName=gnlfamily.com:region=us-west-2":{"Id":"/hostedzone/ZFAKE","Name":"gnlfamily.com."}}' > cdk.context.json
+        working-directory: infra
+      - name: cdk synth
+        run: yarn cdk synth --quiet
+        working-directory: infra
+        env:
+          CDK_DEFAULT_ACCOUNT: '111111111111'
