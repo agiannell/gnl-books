@@ -37,7 +37,9 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] **`withRetry()` / `withTransaction()`** — the only way `core` opens a transaction. The connector reports conflicts as `error.code` `OC000` / `OC001` / `40001` (an earlier assumption that OC001 had another SQLSTATE was wrong), so `isRetryable` reuses its `isOCCError`
 - [ ] `db/migrations/` + runner Lambda on `triggers.Trigger`, `executeOnHandlerChange: true`
       One DDL per transaction, DDL separate from DML, retry `OC001`, `schema_migrations` table
-- [ ] Migrations for the `PLAN.md` schema. `CREATE INDEX ASYNC`, random UUIDv4 keys generated in app code
+- [x] Migration runner (`migrate()` in `packages/core/src/migrate.ts`): one statement per file, each in its own transaction, version recorded in a second one, all idempotent. Tested against a recording fake driver. **Not yet run against the cluster**
+- [x] Migrations for the `PLAN.md` schema in `db/migrations/` (written, not yet applied). `CREATE INDEX ASYNC`, random UUIDv4 keys generated in app code. Deviations from the plan, found by checking the DSQL docs: `jsonb` instead of `text[]` (no array columns), and `NO ACTION` instead of `CASCADE` on `shelf_entries` and `progress_events` (3,000-row limit)
+- [ ] Apply the migrations to the live cluster. Confirms `default now()` / `current_date`, `jsonb` columns, inline `CHECK`, and foreign keys
 - [ ] Kysely types generated from the live schema
 - [ ] **Test:** force a concurrent write conflict and prove `withRetry()` recovers. Easy to get wrong, hard to notice later
 
