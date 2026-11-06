@@ -1,0 +1,16 @@
+{
+  "dialect": "postgres",
+  "outFile": "src/schema.ts",
+  "dateParser": "string",
+  "numericParser": "string",
+  "excludePattern": "sys.*",
+  "overrides": {
+    "columns": {
+      "books.authors": "Generated<ColumnType<string[], string, string>>",
+      "shelf_entries.tags": "Generated<ColumnType<string[], string, string>>",
+      "books.source": "'hardcover' | 'manual'",
+      "shelf_entries.shelf": "'to-read' | 'currently-reading' | 'read'",
+      "progress_events.source": "'web' | 'alexa' | 'widget'"
+    }
+  }
+}

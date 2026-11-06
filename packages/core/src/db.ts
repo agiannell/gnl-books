@@ -2,6 +2,7 @@ import { AuroraDSQLPool } from '@aws/aurora-dsql-node-postgres-connector';
 import { Kysely, PostgresDialect, type Transaction } from 'kysely';
 import { types } from 'pg';
 import { withRetry, type RetryOptions } from './retry';
+import type { DB } from './schema';
 
 const DATE_OID = 1082;
 
@@ -27,9 +28,10 @@ export interface DbConfig {
 /**
  * A Kysely instance over a DSQL pool. Connections are disposable: the connector
  * mints a fresh IAM token for each one, so there is nothing to refresh or keep
- * alive. `DB` is the generated schema type once it exists.
+ * alive. Typed with the generated schema; pass another type only for code that
+ * works on whatever schema exists, like the migration runner.
  */
-export function createDb<DB>({ host, user = 'admin', max = 3 }: DbConfig): Kysely<DB> {
+export function createDb<D = DB>({ host, user = 'admin', max = 3 }: DbConfig): Kysely<D> {
   const pool = new AuroraDSQLPool({
     host,
     user,
@@ -39,7 +41,7 @@ export function createDb<DB>({ host, user = 'admin', max = 3 }: DbConfig): Kysel
     // Retry lives in `withTransaction`, around Kysely's own BEGIN/COMMIT.
     retry: { maxRetries: 0 },
   });
-  return new Kysely<DB>({ dialect: new PostgresDialect({ pool }) });
+  return new Kysely<D>({ dialect: new PostgresDialect({ pool }) });
 }
 
 /**

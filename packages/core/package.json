@@ -5,7 +5,8 @@
   "description": "Domain logic, Kysely queries and the DSQL connection, shared by the GraphQL and Alexa Lambdas.",
   "main": "src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "codegen": "kysely-codegen"
   },
   "license": "MIT",
   "type": "commonjs",
@@ -16,6 +17,7 @@
     "pg-connection-string": "^2.14.1"
   },
   "devDependencies": {
-    "@types/pg": "^8.23.1"
+    "@types/pg": "^8.23.1",
+    "kysely-codegen": "^0.20.0"
   }
 }
