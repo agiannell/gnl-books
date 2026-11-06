@@ -16,7 +16,7 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] Root scaffold: `.nvmrc`, `.npmrc`, `.gitignore`, `package.json`, tsconfigs, `vitest.config.ts`
 - [x] `CLAUDE.md`
 - [x] Commit the scaffold, `CLAUDE.md`, and the `PLAN.md` / `CONTEXT.md` voice-finding edits (pushed)
-- [x] CI `test.yml` (push and PR to `main`): install, typecheck, test, and a real `cdk synth` including the esbuild bundle. Verified locally with no AWS credentials, using a fake `cdk.context.json` the workflow writes. **Not yet run on GitHub**
+- [x] CI `test.yml` (push and PR to `main`): install, typecheck, test, and a real `cdk synth` including the esbuild bundle. Verified locally with no AWS credentials, using a fake `cdk.context.json` the workflow writes, then green on GitHub (PR #1): 40 tests passed, the live ones skipped, and the synth really bundled the runner. The first run failed on a `401` from a private mirror in `yarn.lock`; fixed with a project `.yarnrc`, rewritten lockfile URLs, and a CI guard for non-public hosts
 - [ ] CI `deploy.yml` (manual, `environment: production`, OIDC). Written but **untested**, and it needs the repo secret `AWS_DEPLOY_ROLE_ARN`. The existing `github-deploy` role already trusts `repo:agiannell/*`, but its own permissions are scoped to `GnlLambdasStack` and it can assume the `cdk-*-us-west-2` bootstrap roles, so whether it can deploy `GnlBooksStack` is unconfirmed until a run
 - [ ] Consider tightening `github-deploy`'s trust from `repo:agiannell/*` to the specific repos or environments. It is shared with other projects, so that is your call
 
@@ -30,7 +30,7 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] S3 + CloudFront (OAC). SPA routing is a per-behavior CloudFront Function (extensionless paths → `/index.html`), not distribution-wide 403/404 error responses, so the `/graphql` origin added in step 4 never has its errors rewritten into HTML
 - [x] A and AAAA records for `books.gnlfamily.com` (zone via `HostedZone.fromLookup`) + ACM cert in us-east-1 via `DnsValidatedCertificate`. It is deprecated and CDK says it will be removed in the next major release; it is isolated in one place in `lib/gnl-books-stack.ts`. Revisit when CDK v3 lands, or bootstrap us-east-1 and use a cross-region `Certificate` stack (documented by CDK, but marked experimental)
 - [x] Placeholder SPA deploys and loads over HTTPS. Deployed to the account; verified: `/` and a deep path return the page with a valid cert, `http` redirects, AAAA resolves. A missing asset (`/missing.js`) returns S3's 403 XML, not HTML
-- [ ] `cdk synth` green in CI (the synth step is in `test.yml`; ticks once it has run on GitHub)
+- [x] `cdk synth` green in CI (a step in `test.yml`, no AWS access)
 
 ## 2 — Schema + `packages/core`
 
