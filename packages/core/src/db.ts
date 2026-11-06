@@ -1,6 +1,19 @@
 import { AuroraDSQLPool } from '@aws/aurora-dsql-node-postgres-connector';
 import { Kysely, PostgresDialect, type Transaction } from 'kysely';
+import { types } from 'pg';
 import { withRetry, type RetryOptions } from './retry';
+
+const DATE_OID = 1082;
+
+/**
+ * `pg` turns `date` columns into JS Dates in local time, which can land on the
+ * previous or next day. Keep them as the plain `YYYY-MM-DD` string instead:
+ * the Goodreads CSV needs the exact calendar date.
+ */
+export const typeParsers = {
+  getTypeParser: ((oid: number, format?: 'text' | 'binary') =>
+    oid === DATE_OID ? (value: string) => value : types.getTypeParser(oid, format as 'text')) as typeof types.getTypeParser,
+};
 
 export interface DbConfig {
   /** DSQL cluster endpoint, e.g. `<id>.dsql.us-west-2.on.aws`. */
@@ -22,6 +35,7 @@ export function createDb<DB>({ host, user = 'admin', max = 3 }: DbConfig): Kysel
     user,
     max,
     idleTimeoutMillis: 60_000,
+    types: typeParsers,
     // Retry lives in `withTransaction`, around Kysely's own BEGIN/COMMIT.
     retry: { maxRetries: 0 },
   });

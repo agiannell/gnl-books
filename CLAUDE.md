@@ -16,6 +16,8 @@ yarn typecheck                                # root tsc --noEmit, then `yarn wo
 yarn test                                     # vitest run, all projects
 yarn test --project infra                     # one project
 yarn test:watch
+# live DSQL tests (`*.live.test.ts`) skip unless DSQL_ENDPOINT is set; they need AWS credentials and AWS_REGION
+zsh -ic 'assume agiannell >/dev/null 2>&1; export AWS_REGION=us-west-2 DSQL_ENDPOINT=<cluster>.dsql.us-west-2.on.aws; yarn vitest run packages/core/test/withTransaction.live.test.ts'
 yarn vitest run infra/test/foo.test.ts                    # single file
 yarn vitest run infra/test/foo.test.ts -t "name"          # single test
 ```
