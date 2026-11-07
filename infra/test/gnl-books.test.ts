@@ -55,8 +55,10 @@ describe('migrations', () => {
     });
   });
 
-  // DDL runs as the admin role, so the function needs the admin connect action.
-  it('lets the runner connect as admin, and only the runner', () => {
+  // DDL runs as the admin role, so the runner needs the admin connect action.
+  // The API has it too until custom database roles exist (see TODO.md); this
+  // pins the list so a third function can't pick it up unnoticed.
+  it('lets only the runner and the API connect as admin', () => {
     const policies = template.findResources('AWS::IAM::Policy', {
       Properties: {
         PolicyDocument: {
@@ -64,7 +66,16 @@ describe('migrations', () => {
         },
       },
     });
-    expect(Object.keys(policies)).toHaveLength(1);
+    const roles = Object.values(policies).flatMap((p) =>
+      (p.Properties.Roles as { Ref: string }[]).map((r) => r.Ref),
+    );
+    expect(roles).toHaveLength(2);
+    expect(roles).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('MigrationRunner'),
+        expect.stringContaining('GraphqlFunction'),
+      ]),
+    );
   });
 
   it('invokes the runner on deploy, and again whenever its code changes', () => {
@@ -211,5 +222,51 @@ describe('auth', () => {
       TokenValidityUnits: Match.objectLike({ RefreshToken: 'minutes' }),
       EnableTokenRevocation: true,
     });
+  });
+});
+
+describe('api', () => {
+  it('gives the function the cluster and the pool it must verify against', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs24.x',
+      Environment: {
+        Variables: Match.objectLike({
+          DSQL_ENDPOINT: Match.anyValue(),
+          USER_POOL_ID: Match.anyValue(),
+          USER_POOL_WEB_CLIENT_ID: Match.anyValue(),
+        }),
+      },
+    });
+  });
+
+  it('exposes GET and POST /graphql on an HTTP API, and nothing else', () => {
+    template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
+    template.hasResourceProperties('AWS::ApiGatewayV2::Api', { ProtocolType: 'HTTP' });
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route')).map(
+      (r) => r.Properties.RouteKey,
+    );
+    expect(routes.sort()).toEqual(['GET /graphql', 'POST /graphql']);
+  });
+
+  it('throttles the API', () => {
+    template.hasResourceProperties('AWS::ApiGatewayV2::Stage', {
+      DefaultRouteSettings: { ThrottlingRateLimit: 10, ThrottlingBurstLimit: 20 },
+    });
+  });
+
+  // The SPA behavior rewrites paths to /index.html; the API must not get that.
+  it('serves /graphql from the same distribution, uncached, over HTTPS only', () => {
+    const [distribution] = Object.values(template.findResources('AWS::CloudFront::Distribution'));
+    const behaviors = distribution.Properties.DistributionConfig.CacheBehaviors;
+    expect(behaviors).toHaveLength(1);
+    expect(behaviors[0]).toMatchObject({
+      PathPattern: '/graphql',
+      ViewerProtocolPolicy: 'https-only',
+      AllowedMethods: ['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'POST', 'DELETE'],
+    });
+    expect(behaviors[0].FunctionAssociations).toBeUndefined();
+    // Managed policies: CachingDisabled, AllViewerExceptHostHeader.
+    expect(behaviors[0].CachePolicyId).toBe('4135ea2d-6df8-44a3-9df3-4b5a84be39ad');
+    expect(behaviors[0].OriginRequestPolicyId).toBe('b689b0a8-53d0-40ab-baf2-68738e2966ac');
   });
 });

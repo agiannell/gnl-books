@@ -1,0 +1,26 @@
+{
+  "name": "@gnl-books/graphql",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The GraphQL API: a Pothos schema served by Apollo Server in one Lambda.",
+  "main": "src/schema.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "tsx src/dev.ts"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@apollo/server": "^5.5.1",
+    "@as-integrations/aws-lambda": "^4.1.0",
+    "@gnl-books/core": "0.1.0",
+    "@pothos/core": "^4.16.0",
+    "@pothos/plugin-scope-auth": "^4.2.2",
+    "aws-jwt-verify": "^5.2.1",
+    "graphql": "^16.11.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.164",
+    "tsx": "^4.23.15"
+  }
+}

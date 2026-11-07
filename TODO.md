@@ -49,19 +49,24 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 ## 3 — Cognito
 
 - [x] User pool + Hosted UI + web client in CDK (`gnl-books-stack.ts`, 7 `Template` tests, `cdk diff` only adds resources). Admin-created users only (no self sign-up), email sign-in, pool retained with deletion protection, `gnl-books` Cognito prefix domain, public PKCE client with 365-day revocable refresh tokens, callbacks limited to the site and `localhost:5173`. **Written, not deployed.** The Alexa client (step 9) is separate and needs the 3650-day refresh token, since a short expiry silently breaks the link later
-- [ ] After the deploy: create the two adult users with `admin-create-user`, and confirm the prefix domain was not already taken
+- [x] Deployed (PR #2). The `gnl-books` prefix domain was free, the Hosted UI serves the login page, and the OIDC discovery document resolves. First user `agiannell@gmail.com` created with `admin-create-user` (status `FORCE_CHANGE_PASSWORD`, so the temporary-password email has gone out). Admin-only stays, decided against self sign-up
+- [ ] Create the second adult user when there is something to sign in to
 - [ ] `react-oidc-context` sign-in in the SPA
 - [ ] First-run bootstrap: first user with no `accounts` row creates the family + parent profile, sets the PIN
 - [ ] Parent PIN: `scrypt` + `timingSafeEqual`, stored as `families.parent_pin_hash`
 
 ## 4 — GraphQL API
 
-- [ ] `packages/graphql`: Pothos schema, all logic in `src/schema.ts`
-- [ ] `src/lambda.ts` (`@as-integrations/aws-lambda`, API Gateway v2 handler) and `src/dev.ts` (standalone) as thin wrappers
-- [ ] `aws-jwt-verify` in Apollo's `context` → `{ cognitoSub, familyId, isParent }`
-- [ ] `@pothos/plugin-scope-auth` for `isParent` gating
-- [ ] Every query scoped by `familyId` at the data layer
-- [ ] CloudFront second origin at `/graphql` (no CORS)
+- [x] `packages/graphql`: Pothos schema, all logic in `src/schema.ts`. First slice: `me` and `family`. **`graphql` is pinned to 16** (`^16.11.0`): Apollo Server 5 peers on it, and the registry's latest is 17. Fields are non-null by default (`defaultFieldNullability: false`; Pothos defaults to nullable, which a test caught)
+- [x] `src/lambda.ts` (`@as-integrations/aws-lambda`, API Gateway v2 handler) and `src/dev.ts` (standalone) as thin wrappers over `src/app.ts`, where the server is assembled. Bundles with esbuild to one `graphql` copy; the handler loads and fails fast on missing env. **Not yet wired into CDK**
+- [x] `aws-jwt-verify` in Apollo's `context` → `{ cognitoSub, familyId, isParent }` (`src/context.ts`). Verifies **access** tokens against the web client ID; bad tokens get a generic 401, never the verifier's reason. Tests mock `@gnl-books/core`
+- [x] `@pothos/plugin-scope-auth` with `inFamily` and `isParent` scopes. `isParent` is always false for now (see the open question below)
+- [x] Every query scoped by `familyId` at the data layer: ids come from the verified context, never an argument (tested: `family(id: ...)` is rejected, and the PIN hash is not exposed)
+- [ ] **Decide how a parent-PIN unlock reaches the API.** `PLAN.md` says the context carries `isParent`, but the API is stateless and a signed-in kid has the session. Options: a short-lived signed "parent token" returned by an `unlockParent(pin)` mutation and sent as a second header, or re-sending the PIN with each sensitive mutation. Needed before any parent-only mutation
+- [x] CDK: the GraphQL Lambda (Node 24, 512 MB, env `DSQL_ENDPOINT` / `USER_POOL_ID` / `USER_POOL_WEB_CLIENT_ID`), an HTTP API with `GET` and `POST /graphql` only, throttled to 10 rps / burst 20, and `grantConnectAdmin` until custom roles exist. 4 new `Template` tests; `cdk diff` only adds resources and updates the distribution in place. **Not deployed.** The API is public by design: the function verifies the Cognito token. CloudFront origin access control was rejected because it makes POST callers send a SHA-256 of the body in a header, which a browser GraphQL client cannot
+- [x] Access contract for the public endpoint, tested through the real Apollo server (`packages/graphql/test/access.test.ts`): no token, a forged token, or a malformed header gets a 401 with no `data`, introspection included. Apollo's landing page is disabled, since it was served to browsers before the token check
+- [x] CloudFront second origin at `/graphql`: its own behavior with no SPA rewrite function, caching disabled, HTTPS only, all viewer headers except Host forwarded (so `Authorization` arrives). Same domain, no CORS
+- [ ] First-run bootstrap mutation (creates the family, the parent profile, and the PIN hash), then a live test of `me` / `family` against the real cluster and Cognito
 - [ ] `graphql-codegen` wired into the web build
 
 ## 5 — Hardcover `BookSource`

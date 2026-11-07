@@ -18,6 +18,11 @@ export default defineConfig({
         test: {
           name: 'packages',
           include: ['packages/*/test/**/*.test.ts'],
+          // `graphql` ships ESM and CJS builds. Left external, the tests and
+          // src/ load the ESM one while Pothos loads the CJS one, and graphql
+          // throws "Duplicate graphql modules". Inlining makes Vite load one
+          // copy for all of them. Production is unaffected: esbuild bundles one.
+          server: { deps: { inline: ['graphql', /@pothos\//, /@apollo\/server/, /@graphql-tools\//] } },
         },
       },
     ],
