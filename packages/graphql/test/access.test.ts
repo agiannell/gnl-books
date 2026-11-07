@@ -45,6 +45,33 @@ describe('unauthenticated access', () => {
     expect(res.body).not.toContain('"data"');
   });
 
+  // Apollo decides this when the server is constructed, and a Lambda has no
+  // NODE_ENV (Vitest sets it to "test", which Apollo also treats as safe), so
+  // build a fresh server the way the Lambda does.
+  it('never includes a stack trace in an error, even with NODE_ENV unset', async () => {
+    const original = process.env.NODE_ENV;
+    delete process.env.NODE_ENV;
+    const lambdaLike = createServer();
+    if (original !== undefined) process.env.NODE_ENV = original;
+    await lambdaLike.start();
+    try {
+      const res = await lambdaLike.executeHTTPGraphQLRequest({
+        httpGraphQLRequest: {
+          method: 'POST',
+          headers: new Map([['content-type', 'application/json']]) as never,
+          search: '',
+          body: { query: '{ me { familyId } }' },
+        },
+        context: () => buildContext({ db: {} as Db, verifier, authorization: undefined }),
+      });
+      const body = res.body.kind === 'complete' ? res.body.string : '';
+      expect(body).toContain('UNAUTHENTICATED');
+      expect(body).not.toContain('stacktrace');
+    } finally {
+      await lambdaLike.stop();
+    }
+  });
+
   it('refuses an invalid token the same way', async () => {
     const res = await request({
       headers: { authorization: 'Bearer forged' },
