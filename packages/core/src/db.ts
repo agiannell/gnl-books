@@ -16,6 +16,9 @@ export const typeParsers = {
     oid === DATE_OID ? (value: string) => value : types.getTypeParser(oid, format as 'text')) as typeof types.getTypeParser,
 };
 
+/** The app's typed database handle, so callers needn't depend on kysely directly. */
+export type Db = Kysely<DB>;
+
 export interface DbConfig {
   /** DSQL cluster endpoint, e.g. `<id>.dsql.us-west-2.on.aws`. */
   host: string;

@@ -2,6 +2,8 @@ import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib/core';
 import * as dsql from '@aws-cdk/aws-dsql-alpha';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -181,6 +183,61 @@ export class GnlBooksStack extends cdk.Stack {
       enableTokenRevocation: true,
       preventUserExistenceErrors: true,
     });
+
+    // API
+    const graphqlFunction = new nodejs.NodejsFunction(this, 'GraphqlFunction', {
+      entry: path.join(__dirname, '..', '..', 'packages', 'graphql', 'src', 'lambda.ts'),
+      runtime: lambda.Runtime.NODEJS_24_X,
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 512,
+      environment: {
+        DSQL_ENDPOINT: this.cluster.clusterEndpoint,
+        USER_POOL_ID: this.userPool.userPoolId,
+        USER_POOL_WEB_CLIENT_ID: this.webClient.userPoolClientId,
+      },
+      bundling: {
+        // pg loads this optional native addon lazily; it is not installed.
+        externalModules: ['pg-native'],
+      },
+      projectRoot: path.join(__dirname, '..', '..'),
+      depsLockFilePath: path.join(__dirname, '..', '..', 'yarn.lock'),
+    });
+    // Interim: the admin role, like the migration runner. The API should get a
+    // custom DSQL role limited to DML once those are set up (see TODO.md).
+    this.cluster.grantConnectAdmin(graphqlFunction);
+
+    // Callers authenticate with a Cognito token that the function verifies, so
+    // the API itself is open; the throttle below caps what anyone can do to it.
+    // Not CloudFront origin access control: it requires POST callers to send a
+    // SHA-256 of the body in a header, which a browser GraphQL client cannot.
+    const httpApi = new apigwv2.HttpApi(this, 'GraphqlApi', {
+      apiName: 'gnl-books-graphql',
+      createDefaultStage: true,
+    });
+    httpApi.addRoutes({
+      path: '/graphql',
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration('GraphqlIntegration', graphqlFunction),
+    });
+    (httpApi.defaultStage!.node.defaultChild as apigwv2.CfnStage).defaultRouteSettings = {
+      throttlingRateLimit: 10,
+      throttlingBurstLimit: 20,
+    };
+
+    // Same domain as the SPA, so no CORS. This behavior has no SPA rewrite
+    // function, so an API error is never turned into HTML. Nothing is cached,
+    // and every viewer header except Host (Authorization included) reaches the
+    // origin.
+    distribution.addBehavior(
+      '/graphql',
+      new origins.HttpOrigin(cdk.Fn.select(2, cdk.Fn.split('/', httpApi.apiEndpoint))),
+      {
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      },
+    );
 
     new cdk.CfnOutput(this, 'SiteUrl', { value: `https://${SITE_DOMAIN}` });
     new cdk.CfnOutput(this, 'UserPoolId', { value: this.userPool.userPoolId });
