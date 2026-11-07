@@ -14,7 +14,14 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 export function createServer(): ApolloServer<Context> {
   // Apollo serves a landing page to browsers before it checks the token. It
   // exposes no data, but there is no reason for a public URL to show it.
-  return new ApolloServer<Context>({ schema, plugins: [ApolloServerPluginLandingPageDisabled()] });
+  return new ApolloServer<Context>({
+    schema,
+    plugins: [ApolloServerPluginLandingPageDisabled()],
+    // Apollo includes stack traces unless NODE_ENV is "production", which a
+    // Lambda doesn't set. They carry server file paths, so turn them off here
+    // rather than depend on an environment variable.
+    includeStacktraceInErrorResponses: false,
+  });
 }
 
 // The one place the server is assembled, so the Lambda and the local dev
