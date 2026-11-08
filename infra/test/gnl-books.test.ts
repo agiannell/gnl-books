@@ -239,10 +239,17 @@ describe('api', () => {
     });
   });
 
-  it('generates the parent-token signing key in Secrets Manager, not in the template', () => {
+  it('generates the parent-token signing key into gnl-books/cdk, not in the template', () => {
+    // Only the stack-owned secret: hand-made secrets live in gnl-books/app, outside CDK.
     template.resourceCountIs('AWS::SecretsManager::Secret', 1);
     template.hasResourceProperties('AWS::SecretsManager::Secret', {
-      GenerateSecretString: Match.objectLike({ PasswordLength: 64, ExcludePunctuation: true }),
+      Name: 'gnl-books/cdk',
+      GenerateSecretString: Match.objectLike({
+        SecretStringTemplate: '{}',
+        GenerateStringKey: 'parentTokenKey',
+        PasswordLength: 64,
+        ExcludePunctuation: true,
+      }),
     });
     // Nothing that looks like a literal secret value: no SecretString property.
     const [secret] = Object.values(template.findResources('AWS::SecretsManager::Secret'));
@@ -251,7 +258,7 @@ describe('api', () => {
 
   it('gives the API the secret ARN, and read access to that secret only', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Environment: { Variables: Match.objectLike({ PARENT_TOKEN_SECRET_ARN: Match.anyValue() }) },
+      Environment: { Variables: Match.objectLike({ CDK_SECRET_ARN: Match.anyValue() }) },
     });
     const readers = template.findResources('AWS::IAM::Policy', {
       Properties: {
