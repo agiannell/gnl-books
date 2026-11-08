@@ -239,6 +239,32 @@ describe('api', () => {
     });
   });
 
+  it('generates the parent-token signing key in Secrets Manager, not in the template', () => {
+    template.resourceCountIs('AWS::SecretsManager::Secret', 1);
+    template.hasResourceProperties('AWS::SecretsManager::Secret', {
+      GenerateSecretString: Match.objectLike({ PasswordLength: 64, ExcludePunctuation: true }),
+    });
+    // Nothing that looks like a literal secret value: no SecretString property.
+    const [secret] = Object.values(template.findResources('AWS::SecretsManager::Secret'));
+    expect(secret.Properties.SecretString).toBeUndefined();
+  });
+
+  it('gives the API the secret ARN, and read access to that secret only', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ PARENT_TOKEN_SECRET_ARN: Match.anyValue() }) },
+    });
+    const readers = template.findResources('AWS::IAM::Policy', {
+      Properties: {
+        PolicyDocument: {
+          Statement: Match.arrayWith([Match.objectLike({ Action: Match.arrayWith(['secretsmanager:GetSecretValue']) })]),
+        },
+      },
+    });
+    const roles = Object.values(readers).flatMap((p) => (p.Properties.Roles as { Ref: string }[]).map((r) => r.Ref));
+    expect(roles).toHaveLength(1);
+    expect(roles[0]).toContain('GraphqlFunction');
+  });
+
   it('exposes GET and POST /graphql on an HTTP API, and nothing else', () => {
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
     template.hasResourceProperties('AWS::ApiGatewayV2::Api', { ProtocolType: 'HTTP' });

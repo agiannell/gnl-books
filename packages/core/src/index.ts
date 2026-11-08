@@ -1,6 +1,14 @@
 export { createDb, withTransaction, type Db, type DbConfig } from './db';
 export { AlreadyBootstrappedError, bootstrapFamily, type BootstrapInput } from './bootstrap';
 export { hashPin, PIN_PATTERN, verifyPin } from './pin';
+export {
+  attemptParentUnlock,
+  decideUnlock,
+  LOCKOUT_MS,
+  MAX_PIN_ATTEMPTS,
+  type PinState,
+  type UnlockResult,
+} from './unlock';
 export { findFamilyIdForAccount, getFamily, type Family } from './families';
 export { assertSingleStatement, loadMigrations, migrate, type Migration } from './migrate';
 export { isRetryable, withRetry, type RetryOptions } from './retry';

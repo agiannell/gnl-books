@@ -1,4 +1,11 @@
-import { AlreadyBootstrappedError, bootstrapFamily, getFamily, PIN_PATTERN, type Family } from '@gnl-books/core';
+import {
+  AlreadyBootstrappedError,
+  attemptParentUnlock,
+  bootstrapFamily,
+  getFamily,
+  PIN_PATTERN,
+  type Family,
+} from '@gnl-books/core';
 import SchemaBuilder from '@pothos/core';
 import ScopeAuthPlugin from '@pothos/plugin-scope-auth';
 import { GraphQLError } from 'graphql';
@@ -76,8 +83,57 @@ function requireName(value: string, label: string): string {
   return name;
 }
 
+const ParentUnlockRef = builder.objectRef<{ token: string; expiresAt: Date }>('ParentUnlock');
+ParentUnlockRef.implement({
+  fields: (t) => ({
+    // Send this back in the X-Parent-Token header on parent-only calls. It is
+    // meant to be held in memory, not stored.
+    token: t.exposeString('token'),
+    expiresAt: t.string({ resolve: (unlock) => unlock.expiresAt.toISOString() }),
+  }),
+});
+
 builder.mutationType({
   fields: (t) => ({
+    // Checks the family's parent PIN, with a lockout, and returns a short-lived
+    // token that makes later requests parents (see parentToken.ts).
+    unlockParent: t.field({
+      type: ParentUnlockRef,
+      authScopes: { inFamily: true },
+      args: { pin: t.arg.string() },
+      resolve: async (_root, args, ctx) => {
+        // A malformed PIN cannot be right, so it is not counted as a guess.
+        if (!PIN_PATTERN.test(args.pin)) throw badInput('PIN must be 4 to 8 digits');
+        const familyId = ctx.familyId!;
+
+        const result = await attemptParentUnlock(ctx.db, familyId, args.pin);
+        if (result.ok === false && result.reason === 'locked') {
+          throw new GraphQLError('Too many wrong PINs. Try again later.', {
+            extensions: { code: 'PIN_LOCKED', retryAt: result.until.toISOString() },
+          });
+        }
+        if (result.ok === false) {
+          throw new GraphQLError('Incorrect PIN', {
+            extensions: { code: 'PIN_INCORRECT', attemptsRemaining: result.attemptsRemaining },
+          });
+        }
+        return ctx.parentTokens.issue({ sub: ctx.cognitoSub, familyId });
+      },
+    }),
+
+    // Called with each parent action so an active parent stays unlocked. It
+    // keeps the original start, so the 15-minute cap still counts from the PIN.
+    renewParentUnlock: t.field({
+      type: ParentUnlockRef,
+      authScopes: { isParent: true },
+      resolve: (_root, _args, ctx) =>
+        ctx.parentTokens.issue({
+          sub: ctx.cognitoSub,
+          familyId: ctx.familyId!,
+          startedAt: ctx.parentUnlockStartedAt!,
+        }),
+    }),
+
     // First-run bootstrap. Only a signed-in user with no family can call it, and
     // the account it links is the caller's own, taken from the verified token.
     createFamily: t.field({

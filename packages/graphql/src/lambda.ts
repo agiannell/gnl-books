@@ -8,5 +8,8 @@ export const handler = startServerAndCreateLambdaHandler(
   app.server,
   handlers.createAPIGatewayProxyEventV2RequestHandler(),
   // API Gateway v2 lowercases header names.
-  { context: async ({ event }) => app.context(event.headers.authorization) },
+  {
+    context: async ({ event }) =>
+      app.context(event.headers.authorization, event.headers['x-parent-token']),
+  },
 );
