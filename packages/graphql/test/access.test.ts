@@ -1,8 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@gnl-books/core';
 
-const { findFamilyIdForAccount } = vi.hoisted(() => ({ findFamilyIdForAccount: vi.fn() }));
-vi.mock('@gnl-books/core', () => ({ findFamilyIdForAccount, getFamily: vi.fn(), createDb: vi.fn() }));
+const { findFamilyIdForAccount, bootstrapFamily } = vi.hoisted(() => ({
+  findFamilyIdForAccount: vi.fn(),
+  bootstrapFamily: vi.fn(),
+}));
+vi.mock('@gnl-books/core', async () => {
+  const actual = await vi.importActual<typeof import('@gnl-books/core')>('@gnl-books/core');
+  return { ...actual, findFamilyIdForAccount, getFamily: vi.fn(), bootstrapFamily, createDb: vi.fn() };
+});
 
 import { createServer } from '../src/app';
 import { buildContext } from '../src/context';
@@ -38,6 +44,7 @@ describe('unauthenticated access', () => {
   it.each([
     ['a query', { query: '{ me { familyId } }' }],
     ['introspection', { query: '{ __schema { types { name } } }' }],
+    ['the bootstrap mutation', { query: 'mutation { createFamily(familyName: "x", parentName: "y", pin: "1234") { id } }' }],
   ])('refuses %s with a 401 and no data', async (_name, body) => {
     const res = await request({ body });
     expect(res.status).toBe(401);
@@ -83,6 +90,24 @@ describe('unauthenticated access', () => {
   it('does not serve a landing page to a browser', async () => {
     const res = await request({ method: 'GET', headers: { accept: 'text/html' } });
     expect(res.body).not.toMatch(/<html/i);
+  });
+});
+
+describe('unexpected failures', () => {
+  // An internal error can carry a hostname, a SQL fragment, or a path.
+  it('are reported without their message', async () => {
+    findFamilyIdForAccount.mockResolvedValue(undefined);
+    bootstrapFamily.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.3.7:5432 (secret-host.internal)'));
+    const res = await request({
+      headers: { authorization: 'Bearer good' },
+      body: { query: 'mutation { createFamily(familyName: "x", parentName: "y", pin: "1234") { id } }' },
+    });
+    expect(res.body).not.toContain('ECONNREFUSED');
+    expect(res.body).not.toContain('secret-host');
+    expect(JSON.parse(res.body).errors[0]).toMatchObject({
+      message: 'Internal server error',
+      extensions: { code: 'INTERNAL_SERVER_ERROR' },
+    });
   });
 });
 
