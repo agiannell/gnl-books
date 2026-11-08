@@ -2,8 +2,12 @@ import {
   AlreadyBootstrappedError,
   attemptParentUnlock,
   bootstrapFamily,
+  BookSourceError,
+  cacheHardcoverBook,
   getFamily,
   PIN_PATTERN,
+  type BookSearchResult,
+  type BookSourceErrorCode,
   type Family,
 } from '@gnl-books/core';
 import SchemaBuilder from '@pothos/core';
@@ -54,8 +58,75 @@ FamilyRef.implement({
   }),
 });
 
+// A search hit or an imported book. `id` is ours and is null until the book has
+// been imported into the library; `sourceId` is the catalog's own.
+type BookShape = BookSearchResult & { id: string | null };
+const BookRef = builder.objectRef<BookShape>('Book');
+BookRef.implement({
+  fields: (t) => ({
+    id: t.id({ nullable: true, resolve: (book) => book.id }),
+    sourceId: t.exposeString('sourceId'),
+    title: t.exposeString('title'),
+    subtitle: t.string({ nullable: true, resolve: (book) => book.subtitle ?? null }),
+    authors: t.stringList({ resolve: (book) => book.authors }),
+    isbn13: t.string({ nullable: true, resolve: (book) => book.isbn13 ?? null }),
+    isbn10: t.string({ nullable: true, resolve: (book) => book.isbn10 ?? null }),
+    pages: t.int({ nullable: true, resolve: (book) => book.pages ?? null }),
+    releaseYear: t.int({ nullable: true, resolve: (book) => book.releaseYear ?? null }),
+    coverUrl: t.string({ nullable: true, resolve: (book) => book.coverUrl ?? null }),
+    seriesName: t.string({ nullable: true, resolve: (book) => book.seriesName ?? null }),
+    seriesPosition: t.float({ nullable: true, resolve: (book) => book.seriesPosition ?? null }),
+    description: t.string({ nullable: true, resolve: (book) => book.description ?? null }),
+    publisher: t.string({ nullable: true, resolve: (book) => book.publisher ?? null }),
+    binding: t.string({ nullable: true, resolve: (book) => book.binding ?? null }),
+  }),
+});
+
+const BOOK_SOURCE_FAILURES: Record<BookSourceErrorCode, { code: string; message: string }> = {
+  unauthorized: {
+    code: 'BOOK_SOURCE_UNAUTHORIZED',
+    message: 'Book search is not working: the Hardcover token needs to be renewed',
+  },
+  rate_limited: { code: 'BOOK_SOURCE_RATE_LIMITED', message: 'Book search is busy. Try again in a moment' },
+  timeout: { code: 'BOOK_SOURCE_TIMEOUT', message: 'Book search took too long. Try again' },
+  unavailable: { code: 'BOOK_SOURCE_UNAVAILABLE', message: 'Book search is unavailable right now' },
+};
+
+/**
+ * Runs a catalog call and turns its failure into a coded error the UI can act
+ * on. The catalog's own message goes to the logs, not to the caller.
+ */
+async function viaCatalog<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (!(error instanceof BookSourceError)) throw error;
+    console.error(error);
+    const { code, message } = BOOK_SOURCE_FAILURES[error.code];
+    throw new GraphQLError(message, { extensions: { code, retryAfterSeconds: error.retryAfterSeconds } });
+  }
+}
+
+const MAX_QUERY_LENGTH = 200;
+
 builder.queryType({
   fields: (t) => ({
+    // Searches the catalog. Nothing is written: a hit becomes a library book only
+    // through importBook.
+    searchBooks: t.field({
+      type: [BookRef],
+      authScopes: { inFamily: true },
+      args: { query: t.arg.string() },
+      resolve: async (_root, args, ctx) => {
+        const query = args.query.trim();
+        if (!query || query.length > MAX_QUERY_LENGTH) {
+          throw badInput(`Search must be 1 to ${MAX_QUERY_LENGTH} characters`);
+        }
+        const hits = await viaCatalog(() => ctx.books.search(query));
+        return hits.map((hit) => ({ ...hit, id: null }));
+      },
+    }),
+
     me: t.field({
       type: AccountRef,
       resolve: (_root, _args, ctx) => ({ cognitoSub: ctx.cognitoSub, familyId: ctx.familyId }),
@@ -132,6 +203,20 @@ builder.mutationType({
           familyId: ctx.familyId!,
           startedAt: ctx.parentUnlockStartedAt!,
         }),
+    }),
+
+    // Fetches the full record for a search hit and keeps it in our own books
+    // table, so shelves refer to our id and survive the catalog changing or
+    // going away. Importing the same book again returns the same id.
+    importBook: t.field({
+      type: BookRef,
+      authScopes: { inFamily: true },
+      args: { sourceId: t.arg.string() },
+      resolve: async (_root, args, ctx) => {
+        const book = await viaCatalog(() => ctx.books.getById(args.sourceId.trim()));
+        if (!book) throw new GraphQLError('Book not found', { extensions: { code: 'NOT_FOUND' } });
+        return { ...book, id: await cacheHardcoverBook(ctx.db, book) };
+      },
     }),
 
     // First-run bootstrap. Only a signed-in user with no family can call it, and

@@ -1,4 +1,4 @@
-import { findFamilyIdForAccount, type Db } from '@gnl-books/core';
+import { findFamilyIdForAccount, type BookSource, type Db } from '@gnl-books/core';
 import { GraphQLError } from 'graphql';
 import type { TokenVerifier } from './auth';
 import type { ParentTokens } from './parentToken';
@@ -13,6 +13,8 @@ export interface Context {
   /** When the PIN was entered, so a renewal keeps the original start (and the cap). */
   parentUnlockStartedAt: Date | null;
   parentTokens: ParentTokens;
+  /** Where book searches and details come from (Hardcover). */
+  books: BookSource;
 }
 
 function unauthenticated(message: string): GraphQLError {
@@ -27,6 +29,7 @@ export async function buildContext(args: {
   db: Db;
   verifier: TokenVerifier;
   parentTokens: ParentTokens;
+  books: BookSource;
   authorization: string | undefined;
   /** The `X-Parent-Token` header, if any. */
   parentToken?: string | undefined;
@@ -60,5 +63,6 @@ export async function buildContext(args: {
     isParent: unlock !== null,
     parentUnlockStartedAt: unlock?.startedAt ?? null,
     parentTokens: args.parentTokens,
+    books: args.books,
   };
 }

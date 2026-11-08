@@ -15,9 +15,10 @@ const verifier = {
 };
 
 const parentTokens = { issue: vi.fn(), verify: vi.fn() };
+const books = { name: 'hardcover' as const, search: vi.fn(), getById: vi.fn() };
 
 const build = (authorization: string | undefined, parentToken?: string) =>
-  buildContext({ db, verifier, parentTokens, authorization, parentToken });
+  buildContext({ db, verifier, parentTokens, books, authorization, parentToken });
 
 beforeEach(() => {
   findFamilyIdForAccount.mockReset();
@@ -60,6 +61,7 @@ describe('buildContext', () => {
       isParent: false,
       parentUnlockStartedAt: null,
       parentTokens,
+      books,
     });
   });
 

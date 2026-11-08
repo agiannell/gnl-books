@@ -37,6 +37,14 @@ const verifier = {
 // A real signer, so the access tests exercise the real token rules.
 const parentTokens = createParentTokens('s'.repeat(48));
 
+// Records every catalog call, so a refused request can be shown never to have reached it.
+const catalogCalls = vi.fn();
+const books = {
+  name: 'hardcover' as const,
+  search: async (...args: unknown[]) => (catalogCalls(...args), []),
+  getById: async (...args: unknown[]) => (catalogCalls(...args), null),
+};
+
 async function request(init: { headers?: Record<string, string>; method?: string; body?: unknown }) {
   const authorization = init.headers?.authorization;
   const res = await server.executeHTTPGraphQLRequest({
@@ -46,7 +54,7 @@ async function request(init: { headers?: Record<string, string>; method?: string
       search: '',
       body: init.body,
     },
-    context: () => buildContext({ db: {} as Db, verifier, parentTokens, authorization, parentToken: init.headers?.['x-parent-token'] }),
+    context: () => buildContext({ db: {} as Db, verifier, parentTokens, books, authorization, parentToken: init.headers?.['x-parent-token'] }),
   });
   return { status: res.status ?? 200, body: res.body.kind === 'complete' ? res.body.string : '' };
 }
@@ -59,11 +67,16 @@ describe('unauthenticated access', () => {
     ['a query', { query: '{ me { familyId } }' }],
     ['introspection', { query: '{ __schema { types { name } } }' }],
     ['the bootstrap mutation', { query: 'mutation { createFamily(familyName: "x", parentName: "y", pin: "1234") { id } }' }],
+    ['a book search', { query: '{ searchBooks(query: "dog man") { title } }' }],
+    ['a book import', { query: 'mutation { importBook(sourceId: "1") { id } }' }],
   ])('refuses %s with a 401 and no data', async (_name, body) => {
+    catalogCalls.mockClear();
     const res = await request({ body });
     expect(res.status).toBe(401);
     expect(JSON.parse(res.body)).toMatchObject({ errors: [{ extensions: { code: 'UNAUTHENTICATED' } }] });
     expect(res.body).not.toContain('"data"');
+    // The public endpoint must not be a free proxy to the catalog (and its rate limit).
+    expect(catalogCalls).not.toHaveBeenCalled();
   });
 
   // Apollo decides this when the server is constructed, and a Lambda has no
@@ -83,7 +96,7 @@ describe('unauthenticated access', () => {
           search: '',
           body: { query: '{ me { familyId } }' },
         },
-        context: () => buildContext({ db: {} as Db, verifier, parentTokens, authorization: undefined }),
+        context: () => buildContext({ db: {} as Db, verifier, parentTokens, books, authorization: undefined }),
       });
       const body = res.body.kind === 'complete' ? res.body.string : '';
       expect(body).toContain('UNAUTHENTICATED');

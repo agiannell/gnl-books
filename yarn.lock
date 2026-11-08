@@ -763,6 +763,11 @@
   resolved "https://registry.npmjs.org/@graphql-typed-document-node/core/-/core-3.2.0.tgz#5f3d96ec6b2354ad6d8a28bf216a1d97b5426861"
   integrity sha512-mB9oAsNCm9aM3/SOv4YtBMqZbYj10R7dkq8byBqxGY/ncFwhf2oQzMV+LCRlWoDSEBJ3COiR1yeDvMtsoOsuFQ==
 
+"@hardcover/sdk@^0.1.1":
+  version "0.1.1"
+  resolved "https://registry.npmjs.org/@hardcover/sdk/-/sdk-0.1.1.tgz#f9b813d495d6786a18fbc87a21b1142be80fa106"
+  integrity sha512-3y1VeQ6pkZNUQ7dhSH7Wsty7pg0WoiALIHRfmGlj0RPy9svQ+NB1jdRvYAZSvCUBrlOV1tAAC85hpUKYR56ItA==
+
 "@jridgewell/resolve-uri@^3.1.0":
   version "3.1.2"
   resolved "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz#7a0ee601f60f99a20c7c7c5ff0c80388c1189bd6"
