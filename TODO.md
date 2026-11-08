@@ -85,9 +85,14 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] Manual-add path (`addManualBook`): no source id, never merged, even with the same title
 - [x] The Hardcover token is in your hand-made `gnl-books/app` secret as JSON key `hardcoverApiKey` (key names checked, values never read by me). CDK imports it by name (never creates it), grants the API function read access, and passes `APP_SECRET_ID`; the API reads it on first catalog use, and a failed read is retried, not remembered
 - [x] `searchBooks(query)` (a query, writes nothing) and `importBook(sourceId)` (a mutation: fetches the full record, caches it, returns our id) in the GraphQL schema, family members only. Changed from the earlier plan of one lookup that caches: caching every hit of every search would write about 20 rows a search. `Book.id` is null for a hit not yet imported. Catalog failures come back as `BOOK_SOURCE_UNAUTHORIZED` / `_RATE_LIMITED` (with `retryAfterSeconds`) / `_TIMEOUT` / `_UNAVAILABLE`, with the catalog's own message kept to the logs. **Written and tested, not deployed.**
-- [ ] After the deploy: run a real search and an import through the API (throwaway Cognito user), and check the results against `parseHit` / `parseDetail`, which so far are written from the docs and the SDK's types, not from live data; then tune them
+- [x] **Verified live** (2026-11-08, throwaway Cognito user, all rows and the user removed afterwards): parent unlock reads the new `gnl-books/cdk` secret; a real "Dog Man" search returns 20 well-formed hits (every hit had ISBN and cover; authors 19, pages 18, series 18 of 20); `importBook` returns the full record (publisher, binding, ISBN-13 from an edition) and importing twice gives the same id; unauthenticated search is a 401. `parseHit` / `parseDetail` needed no changes. Findings:
+  - Hardcover's search had a transient outage during the first run (`Search failed. Please try again.`, reproduced with a raw POST, gone minutes later); it surfaced correctly as `BOOK_SOURCE_UNAVAILABLE`. The token was fine throughout.
+  - A hit's ISBN is whichever edition Hardcover lists first (the Dog Man #1 hit had a foreign-edition ISBN); `importBook` replaces it with the better edition's, so show ISBNs from imported books, not hits.
+  - Hardcover ids are 32-bit: a bigger one makes it throw a GraphQL "outside the bounds" error, which looked like an outage. `getById` now answers `null` for those (tested).
+  - For the SPA: cover images come from `assets.hardcover.app` (allow it in any `img-src`/CSP), and descriptions are Markdown with `\r\n`
 - [ ] A `book(id)` lookup by our id, when the shelf API needs it
-- [ ] Note the PAT expiry date somewhere durable, and show a clear error in the UI on `unauthorized`
+- [x] The Hardcover token is set to never expire (decided by you), so there is no expiry date to track; it can still be revoked, or lose its scope. `read:catalog` confirmed on the key.
+- [ ] Show a clear error in the UI on `BOOK_SOURCE_UNAUTHORIZED` (the token was revoked or lost its scope)
 
 ## 6 — Shelves in the SPA
 

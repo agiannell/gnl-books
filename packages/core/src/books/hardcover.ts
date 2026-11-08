@@ -34,6 +34,7 @@ export interface HardcoverSourceOptions {
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 25;
+const MAX_ID = 2_147_483_647;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
@@ -173,6 +174,9 @@ export function createHardcoverSource(options: HardcoverSourceOptions): BookSour
     async getById(sourceId) {
       if (!/^\d+$/.test(sourceId)) return null;
       const id = Number(sourceId);
+      // Hardcover ids are 32-bit. A larger one cannot exist, and Hardcover
+      // answers it with a GraphQL error rather than "not found".
+      if (id > MAX_ID) return null;
       try {
         const [book, editions] = await Promise.all([client.books.get(id), client.books.editions(id, { limit: 10 })]);
         if (book === null) return null;
