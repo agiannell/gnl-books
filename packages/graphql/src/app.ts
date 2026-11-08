@@ -1,4 +1,5 @@
 import { ApolloServer } from '@apollo/server';
+import { ApolloServerErrorCode } from '@apollo/server/errors';
 import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/disabled';
 import { createDb } from '@gnl-books/core';
 import { createCognitoVerifier } from './auth';
@@ -21,6 +22,15 @@ export function createServer(): ApolloServer<Context> {
     // Lambda doesn't set. They carry server file paths, so turn them off here
     // rather than depend on an environment variable.
     includeStacktraceInErrorResponses: false,
+    // Errors we throw on purpose (GraphQLError with a code) reach the caller as
+    // written. Anything else is a bug or an outage, and its message can carry a
+    // hostname or a SQL fragment, so the caller gets a generic one and the real
+    // error goes to the logs.
+    formatError: (formatted, error) => {
+      if (formatted.extensions?.code !== ApolloServerErrorCode.INTERNAL_SERVER_ERROR) return formatted;
+      console.error(error);
+      return { ...formatted, message: 'Internal server error' };
+    },
   });
 }
 
