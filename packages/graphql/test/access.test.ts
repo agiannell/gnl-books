@@ -69,6 +69,8 @@ describe('unauthenticated access', () => {
     ['the bootstrap mutation', { query: 'mutation { createFamily(familyName: "x", parentName: "y", pin: "1234") { id } }' }],
     ['a book search', { query: '{ searchBooks(query: "dog man") { title } }' }],
     ['a book import', { query: 'mutation { importBook(sourceId: "1") { id } }' }],
+    ['a profile lookup', { query: '{ profile(id: "p-1") { name } }' }],
+    ['a profile creation', { query: 'mutation { createProfile(input: { name: "A" }) { id } }' }],
   ])('refuses %s with a 401 and no data', async (_name, body) => {
     catalogCalls.mockClear();
     const res = await request({ body });

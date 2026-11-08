@@ -2,19 +2,23 @@ import { graphql } from 'graphql';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@gnl-books/core';
 
-const { getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook } = vi.hoisted(() => ({
-  getFamily: vi.fn(),
-  bootstrapFamily: vi.fn(),
-  attemptParentUnlock: vi.fn(),
-  cacheHardcoverBook: vi.fn(),
-}));
+const { getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook, listProfiles, getProfile, createProfile } =
+  vi.hoisted(() => ({
+    getFamily: vi.fn(),
+    bootstrapFamily: vi.fn(),
+    attemptParentUnlock: vi.fn(),
+    cacheHardcoverBook: vi.fn(),
+    listProfiles: vi.fn(),
+    getProfile: vi.fn(),
+    createProfile: vi.fn(),
+  }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
 vi.mock('@gnl-books/core', async () => {
   const actual = await vi.importActual<typeof import('@gnl-books/core')>('@gnl-books/core');
-  return { ...actual, getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook };
+  return { ...actual, getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook, listProfiles, getProfile, createProfile };
 });
-import { AlreadyBootstrappedError, BookSourceError } from '@gnl-books/core';
+import { AlreadyBootstrappedError, BookSourceError, TooManyProfilesError } from '@gnl-books/core';
 
 import type { Context } from '../src/context';
 import { schema } from '../src/schema';
@@ -44,6 +48,9 @@ beforeEach(() => {
   bootstrapFamily.mockReset();
   attemptParentUnlock.mockReset();
   cacheHardcoverBook.mockReset();
+  listProfiles.mockReset();
+  getProfile.mockReset();
+  createProfile.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -218,6 +225,96 @@ describe('renewParentUnlock', () => {
     });
     expect(result.data).toEqual({ renewParentUnlock: { token: 'new-token', expiresAt: '2026-11-08T12:02:00.000Z' } });
     expect(parentTokens.issue).toHaveBeenCalledWith({ sub: 'sub-123', familyId: 'family-1', startedAt });
+  });
+});
+
+describe('profiles', () => {
+  const sam = { id: 'p-1', name: 'Sam', emoji: '🦊', color: '#3366cc', isParent: false };
+
+  it("lists the caller's family's profiles, using the family from the context", async () => {
+    getFamily.mockResolvedValue({ id: 'family-1', name: 'Test' });
+    listProfiles.mockResolvedValue([sam]);
+    const result = await run('{ family { profiles { id name emoji color isParent } } }', { familyId: 'family-1' });
+    expect(result.data).toEqual({ family: { profiles: [sam] } });
+    expect(listProfiles).toHaveBeenCalledWith(db, 'family-1');
+  });
+
+  it('does not list profiles for a caller with no family, even through createFamily', async () => {
+    bootstrapFamily.mockResolvedValue({ id: 'new-family', name: 'New' });
+    const result = await run(
+      'mutation { createFamily(familyName: "New", parentName: "Pat", pin: "4821") { id profiles { id } } }',
+    );
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(listProfiles).not.toHaveBeenCalled();
+  });
+
+  it('looks a profile up within the caller’s family only', async () => {
+    getProfile.mockResolvedValue(sam);
+    const result = await run('{ profile(id: "p-1") { name } }', { familyId: 'family-1' });
+    expect(result.data).toEqual({ profile: { name: 'Sam' } });
+    expect(getProfile).toHaveBeenCalledWith(db, 'family-1', 'p-1');
+  });
+
+  it('is null, not an error, for a profile that is not theirs', async () => {
+    getProfile.mockResolvedValue(undefined);
+    const result = await run('{ profile(id: "someone-elses") { name } }', { familyId: 'family-1' });
+    expect(result).toEqual({ data: { profile: null } });
+  });
+
+  it('is FORBIDDEN to look up a profile before there is a family, without touching the database', async () => {
+    const result = await run('{ profile(id: "p-1") { name } }');
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(getProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe('createProfile', () => {
+  const create = (input: string) => `mutation { createProfile(input: ${input}) { id name emoji color isParent } }`;
+  const parent = { familyId: 'family-1', isParent: true };
+  const made = { id: 'p-2', name: 'Alex', emoji: null, color: null, isParent: false };
+
+  it('creates a profile in the caller’s family, trimmed, as a non-parent by default', async () => {
+    createProfile.mockResolvedValue(made);
+    const result = await run(create('{ name: "  Alex  ", emoji: "🦊", color: "#3366CC" }'), parent);
+    expect(result.errors).toBeUndefined();
+    expect(createProfile).toHaveBeenCalledWith(db, 'family-1', { name: 'Alex', emoji: '🦊', color: '#3366CC', isParent: false });
+  });
+
+  it('can make a second adult a parent profile', async () => {
+    createProfile.mockResolvedValue({ ...made, isParent: true });
+    await run(create('{ name: "Jo", isParent: true }'), parent);
+    expect(createProfile).toHaveBeenCalledWith(db, 'family-1', expect.objectContaining({ isParent: true }));
+  });
+
+  it('treats a blank emoji or color as not given', async () => {
+    createProfile.mockResolvedValue(made);
+    await run(create('{ name: "Alex", emoji: "  ", color: "" }'), parent);
+    expect(createProfile).toHaveBeenCalledWith(db, 'family-1', { name: 'Alex', emoji: undefined, color: undefined, isParent: false });
+  });
+
+  it.each([
+    ['an empty name', '{ name: "   " }'],
+    ['an over-long name', `{ name: "${'x'.repeat(61)}" }`],
+    ['a long emoji', '{ name: "A", emoji: "123456789" }'],
+    ['a color without the #', '{ name: "A", color: "3366cc" }'],
+    ['a short color', '{ name: "A", color: "#fff" }'],
+    ['a color that is not hex', '{ name: "A", color: "#3366zz" }'],
+  ])('rejects %s as bad input, writing nothing', async (_name, input) => {
+    const result = await run(create(input), parent);
+    expect(result.errors?.[0]?.extensions?.code).toBe('BAD_USER_INPUT');
+    expect(createProfile).not.toHaveBeenCalled();
+  });
+
+  it('is FORBIDDEN unless a parent has unlocked, even for a signed-in family member', async () => {
+    const result = await run(create('{ name: "Alex" }'), { familyId: 'family-1', isParent: false });
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(createProfile).not.toHaveBeenCalled();
+  });
+
+  it('reports the profile limit as LIMIT_REACHED', async () => {
+    createProfile.mockRejectedValue(new TooManyProfilesError());
+    const result = await run(create('{ name: "Alex" }'), parent);
+    expect(result.errors?.[0]?.extensions?.code).toBe('LIMIT_REACHED');
   });
 });
 

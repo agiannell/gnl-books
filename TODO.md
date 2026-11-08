@@ -94,6 +94,12 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] The Hardcover token is set to never expire (decided by you), so there is no expiry date to track; it can still be revoked, or lose its scope. `read:catalog` confirmed on the key.
 - [ ] Show a clear error in the UI on `BOOK_SOURCE_UNAUTHORIZED` (the token was revoked or lost its scope)
 
+## 5b — Profiles and shelves API
+
+- [x] **Decided: any signed-in family member can edit any profile's shelf** (the API cannot tell whose session it is); the parent PIN gates profile management, deleting, and CSV export only. See `PLAN.md`
+- [x] Profiles: `family.profiles`, `profile(id)`, `createProfile(input)` (parent-only; name, emoji, `#rrggbb` color, optional `isParent` for a second adult; 20-profile cap as `LIMIT_REACHED`), all scoped by the caller's family from the context. `profile(id)` is null for a malformed or another family's id. **Written and live-tested on the cluster, not deployed.** The cap can overshoot by a profile or two under simultaneous adds (DSQL only detects write conflicts); fine for a guard
+- [ ] Shelf entries: `addToShelf(profileId, bookId, shelf)`, then rate, review, finish, progress log, goals
+
 ## 6 — Shelves in the SPA
 
 - [ ] **Decide:** React Router v7 (per `PLAN.md`) or 8.5.1 (current major, needs Node >= 22.22). What changed in 8 is unchecked

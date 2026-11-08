@@ -4,11 +4,16 @@ import {
   bootstrapFamily,
   BookSourceError,
   cacheHardcoverBook,
+  createProfile,
   getFamily,
+  getProfile,
+  listProfiles,
   PIN_PATTERN,
+  TooManyProfilesError,
   type BookSearchResult,
   type BookSourceErrorCode,
   type Family,
+  type Profile,
 } from '@gnl-books/core';
 import SchemaBuilder from '@pothos/core';
 import ScopeAuthPlugin from '@pothos/plugin-scope-auth';
@@ -50,11 +55,28 @@ AccountRef.implement({
   }),
 });
 
+const ProfileRef = builder.objectRef<Profile>('Profile');
+ProfileRef.implement({
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    name: t.exposeString('name'),
+    emoji: t.string({ nullable: true, resolve: (profile) => profile.emoji }),
+    color: t.string({ nullable: true, resolve: (profile) => profile.color }),
+    isParent: t.exposeBoolean('isParent'),
+  }),
+});
+
 const FamilyRef = builder.objectRef<Family>('Family');
 FamilyRef.implement({
   fields: (t) => ({
     id: t.exposeID('id'),
     name: t.exposeString('name'),
+    // The caller's own family, from the context, whatever family object this hangs off.
+    profiles: t.field({
+      type: [ProfileRef],
+      authScopes: { inFamily: true },
+      resolve: (_family, _args, ctx) => listProfiles(ctx.db, ctx.familyId!),
+    }),
   }),
 });
 
@@ -131,6 +153,16 @@ builder.queryType({
       type: AccountRef,
       resolve: (_root, _args, ctx) => ({ cognitoSub: ctx.cognitoSub, familyId: ctx.familyId }),
     }),
+    // Null for an id that is not one of this family's profiles, including a
+    // malformed id or another family's: the caller learns nothing about those.
+    profile: t.field({
+      type: ProfileRef,
+      nullable: true,
+      authScopes: { inFamily: true },
+      args: { id: t.arg.id() },
+      resolve: async (_root, args, ctx) => (await getProfile(ctx.db, ctx.familyId!, String(args.id))) ?? null,
+    }),
+
     family: t.field({
       type: FamilyRef,
       authScopes: { inFamily: true },
@@ -153,6 +185,18 @@ function requireName(value: string, label: string): string {
   if (name.length < 1 || name.length > 60) throw badInput(`${label} must be 1 to 60 characters`);
   return name;
 }
+
+const COLOR = /^#[0-9a-f]{6}$/i;
+const MAX_EMOJI_CHARACTERS = 8;
+
+const CreateProfileInput = builder.inputType('CreateProfileInput', {
+  fields: (t) => ({
+    name: t.string(),
+    emoji: t.string({ required: false }),
+    color: t.string({ required: false }),
+    isParent: t.boolean({ required: false }),
+  }),
+});
 
 const ParentUnlockRef = builder.objectRef<{ token: string; expiresAt: Date }>('ParentUnlock');
 ParentUnlockRef.implement({
@@ -203,6 +247,31 @@ builder.mutationType({
           familyId: ctx.familyId!,
           startedAt: ctx.parentUnlockStartedAt!,
         }),
+    }),
+
+    // Adds a reader to the family. Parent-only: a kid on the shared tablet must
+    // not be able to add or impersonate profiles.
+    createProfile: t.field({
+      type: ProfileRef,
+      authScopes: { isParent: true },
+      args: { input: t.arg({ type: CreateProfileInput }) },
+      resolve: async (_root, { input }, ctx) => {
+        const name = requireName(input.name, 'Name');
+        const emoji = input.emoji?.trim() || undefined;
+        if (emoji && Array.from(emoji).length > MAX_EMOJI_CHARACTERS) {
+          throw badInput(`Emoji must be at most ${MAX_EMOJI_CHARACTERS} characters`);
+        }
+        const color = input.color?.trim() || undefined;
+        if (color && !COLOR.test(color)) throw badInput('Color must look like #3366cc');
+        try {
+          return await createProfile(ctx.db, ctx.familyId!, { name, emoji, color, isParent: input.isParent ?? false });
+        } catch (error) {
+          if (error instanceof TooManyProfilesError) {
+            throw new GraphQLError(error.message, { extensions: { code: 'LIMIT_REACHED' } });
+          }
+          throw error;
+        }
+      },
     }),
 
     // Fetches the full record for a search hit and keeps it in our own books
