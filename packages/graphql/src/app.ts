@@ -2,7 +2,7 @@ import { ApolloServer } from '@apollo/server';
 import { ApolloServerErrorCode } from '@apollo/server/errors';
 import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/disabled';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { createDb } from '@gnl-books/core';
+import { createDb, createHardcoverSource, type BookSource } from '@gnl-books/core';
 import { createCognitoVerifier } from './auth';
 import { buildContext, type Context } from './context';
 import { createParentTokens, type ParentTokens } from './parentToken';
@@ -36,21 +36,24 @@ export function createServer(): ApolloServer<Context> {
   });
 }
 
+/** Runs `load` on first use and remembers the result. A failed load is not remembered, so the next call retries. */
+function once<T>(load: () => Promise<T>): () => Promise<T> {
+  let ready: Promise<T> | undefined;
+  return () => {
+    ready ??= load().catch((error) => {
+      ready = undefined;
+      throw error;
+    });
+    return ready;
+  };
+}
+
 /**
  * Builds the parent-token signer on first use, not at startup, so requests that
  * carry no unlock token never wait for the secret. A failed load is not cached.
  */
 export function lazyParentTokens(loadSecret: () => Promise<string>): ParentTokens {
-  let ready: Promise<ParentTokens> | undefined;
-  const tokens = () => {
-    ready ??= loadSecret()
-      .then((secret) => createParentTokens(secret))
-      .catch((error) => {
-        ready = undefined;
-        throw error;
-      });
-    return ready;
-  };
+  const tokens = once(async () => createParentTokens(await loadSecret()));
   return {
     issue: async (args) => (await tokens()).issue(args),
     verify: async (token, who) => (await tokens()).verify(token, who),
@@ -85,11 +88,39 @@ function parentTokenSecret(env: NodeJS.ProcessEnv): () => Promise<string> {
   };
 }
 
+/**
+ * The Hardcover source, built on the first search or import, so requests that
+ * never touch the catalog never read the secret (and a missing or bad token
+ * fails only the calls that need it).
+ */
+export function lazyBookSource(loadToken: () => Promise<string>): BookSource {
+  const source = once(async () => createHardcoverSource({ token: await loadToken(), userAgent: 'gnl-books' }));
+  return {
+    name: 'hardcover',
+    search: async (query, options) => (await source()).search(query, options),
+    getById: async (sourceId) => (await source()).getById(sourceId),
+  };
+}
+
+// The Hardcover token lives in the hand-made gnl-books/app secret.
+// HARDCOVER_API_KEY is for local development only, like PARENT_TOKEN_SECRET.
+const HARDCOVER_TOKEN_KEY = 'hardcoverApiKey';
+function hardcoverToken(env: NodeJS.ProcessEnv): () => Promise<string> {
+  const local = env.HARDCOVER_API_KEY;
+  if (local) return async () => local;
+  return async () => {
+    const secretId = required(env, 'APP_SECRET_ID');
+    const { SecretString } = await new SecretsManagerClient({}).send(new GetSecretValueCommand({ SecretId: secretId }));
+    return jsonSecretValue(SecretString, HARDCOVER_TOKEN_KEY);
+  };
+}
+
 // The one place the server is assembled, so the Lambda and the local dev
 // server cannot drift apart.
 export function createApp(env: NodeJS.ProcessEnv = process.env) {
   const db = createDb({ host: required(env, 'DSQL_ENDPOINT') });
   const parentTokens = lazyParentTokens(parentTokenSecret(env));
+  const books = lazyBookSource(hardcoverToken(env));
   const verifier = createCognitoVerifier({
     userPoolId: required(env, 'USER_POOL_ID'),
     clientId: [required(env, 'USER_POOL_WEB_CLIENT_ID')],
@@ -98,6 +129,6 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
   return {
     server,
     context: (authorization: string | undefined, parentToken?: string | undefined) =>
-      buildContext({ db, verifier, parentTokens, authorization, parentToken }),
+      buildContext({ db, verifier, parentTokens, books, authorization, parentToken }),
   };
 }

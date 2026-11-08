@@ -23,6 +23,8 @@ const AUTH_DOMAIN_PREFIX = 'gnl-books';
 // The stack-owned secret; the API reads PARENT_TOKEN_KEY out of its JSON.
 const CDK_SECRET_NAME = 'gnl-books/cdk';
 const PARENT_TOKEN_KEY = 'parentTokenKey';
+// Created by hand, never by this stack; the API reads `hardcoverApiKey` from it.
+const APP_SECRET_NAME = 'gnl-books/app';
 // Vite's default dev-server origin, which `create-react-router` uses.
 const LOCAL_DEV_URL = 'http://localhost:5173';
 
@@ -205,6 +207,10 @@ export class GnlBooksStack extends cdk.Stack {
       },
     });
 
+    // Hand-made, outside CDK: it holds the Hardcover token. Imported by name so
+    // the stack can grant read access but never creates, changes or deletes it.
+    const appSecret = secretsmanager.Secret.fromSecretNameV2(this, 'AppSecret', APP_SECRET_NAME);
+
     const graphqlFunction = new nodejs.NodejsFunction(this, 'GraphqlFunction', {
       entry: path.join(__dirname, '..', '..', 'packages', 'graphql', 'src', 'lambda.ts'),
       runtime: lambda.Runtime.NODEJS_24_X,
@@ -216,6 +222,7 @@ export class GnlBooksStack extends cdk.Stack {
         USER_POOL_WEB_CLIENT_ID: this.webClient.userPoolClientId,
         // The ARN, not the value: the function reads the secret at runtime.
         CDK_SECRET_ARN: cdkSecret.secretArn,
+        APP_SECRET_ID: APP_SECRET_NAME,
       },
       bundling: {
         // pg loads this optional native addon lazily; it is not installed.
@@ -228,6 +235,7 @@ export class GnlBooksStack extends cdk.Stack {
     // custom DSQL role limited to DML once those are set up (see TODO.md).
     this.cluster.grantConnectAdmin(graphqlFunction);
     cdkSecret.grantRead(graphqlFunction);
+    appSecret.grantRead(graphqlFunction);
 
     // Callers authenticate with a Cognito token that the function verifies, so
     // the API itself is open; the throttle below caps what anyone can do to it.

@@ -272,6 +272,21 @@ describe('api', () => {
     expect(roles[0]).toContain('GraphqlFunction');
   });
 
+  it('lets the API read the hand-made gnl-books/app secret by name, without CDK owning it', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ APP_SECRET_ID: 'gnl-books/app' }) },
+    });
+    // Imported, not created: it is still only the one generated secret in the template.
+    template.resourceCountIs('AWS::SecretsManager::Secret', 1);
+    // Read (and only read) access, to a name-based ARN with the random suffix wildcarded.
+    const statements = Object.values(template.findResources('AWS::IAM::Policy')).flatMap(
+      (p) => p.Properties.PolicyDocument.Statement as { Action: string | string[]; Resource: unknown }[],
+    );
+    const forApp = statements.filter((s) => JSON.stringify(s.Resource).includes('secret:gnl-books/app-'));
+    expect(forApp).toHaveLength(1);
+    expect([forApp[0].Action].flat().sort()).toEqual(['secretsmanager:DescribeSecret', 'secretsmanager:GetSecretValue']);
+  });
+
   it('exposes GET and POST /graphql on an HTTP API, and nothing else', () => {
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
     template.hasResourceProperties('AWS::ApiGatewayV2::Api', { ProtocolType: 'HTTP' });

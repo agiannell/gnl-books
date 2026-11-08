@@ -2,18 +2,19 @@ import { graphql } from 'graphql';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@gnl-books/core';
 
-const { getFamily, bootstrapFamily, attemptParentUnlock } = vi.hoisted(() => ({
+const { getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   bootstrapFamily: vi.fn(),
   attemptParentUnlock: vi.fn(),
+  cacheHardcoverBook: vi.fn(),
 }));
-// Only what touches the database is mocked; the PIN rule and the error class
+// Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
 vi.mock('@gnl-books/core', async () => {
   const actual = await vi.importActual<typeof import('@gnl-books/core')>('@gnl-books/core');
-  return { ...actual, getFamily, bootstrapFamily, attemptParentUnlock };
+  return { ...actual, getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook };
 });
-import { AlreadyBootstrappedError } from '@gnl-books/core';
+import { AlreadyBootstrappedError, BookSourceError } from '@gnl-books/core';
 
 import type { Context } from '../src/context';
 import { schema } from '../src/schema';
@@ -21,7 +22,8 @@ import { schema } from '../src/schema';
 const db = {} as Db;
 const expiresAt = new Date('2026-11-08T12:02:00Z');
 const parentTokens = { issue: vi.fn(), verify: vi.fn() };
-const run = (source: string, context: Partial<Context> = {}) =>
+const books = { name: 'hardcover' as const, search: vi.fn(), getById: vi.fn() };
+const run =(source: string, context: Partial<Context> = {}) =>
   graphql({
     schema,
     source,
@@ -32,6 +34,7 @@ const run = (source: string, context: Partial<Context> = {}) =>
       isParent: false,
       parentUnlockStartedAt: null,
       parentTokens,
+      books,
       ...context,
     },
   });
@@ -40,6 +43,9 @@ beforeEach(() => {
   getFamily.mockReset();
   bootstrapFamily.mockReset();
   attemptParentUnlock.mockReset();
+  cacheHardcoverBook.mockReset();
+  books.search.mockReset();
+  books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
 });
 
@@ -212,5 +218,94 @@ describe('renewParentUnlock', () => {
     });
     expect(result.data).toEqual({ renewParentUnlock: { token: 'new-token', expiresAt: '2026-11-08T12:02:00.000Z' } });
     expect(parentTokens.issue).toHaveBeenCalledWith({ sub: 'sub-123', familyId: 'family-1', startedAt });
+  });
+});
+
+describe('searchBooks', () => {
+  const search = (query: string) => `{ searchBooks(query: ${JSON.stringify(query)}) { id sourceId title authors pages seriesPosition coverUrl } }`;
+  const hit = { sourceId: '101', title: 'Dog Man', authors: ['Dav Pilkey'], pages: 240, seriesPosition: 1 };
+
+  it('returns the catalog hits with no library id, and writes nothing', async () => {
+    books.search.mockResolvedValue([hit]);
+    const result = await run(search('dog man'), { familyId: 'family-1' });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      searchBooks: [{ id: null, sourceId: '101', title: 'Dog Man', authors: ['Dav Pilkey'], pages: 240, seriesPosition: 1, coverUrl: null }],
+    });
+    expect(cacheHardcoverBook).not.toHaveBeenCalled();
+  });
+
+  it('trims the query before searching', async () => {
+    books.search.mockResolvedValue([]);
+    await run(search('  dog man  '), { familyId: 'family-1' });
+    expect(books.search).toHaveBeenCalledWith('dog man');
+  });
+
+  it.each([['an empty query', ''], ['a blank query', '   '], ['an over-long query', 'x'.repeat(201)]])(
+    'rejects %s as bad input without calling the catalog',
+    async (_name, query) => {
+      const result = await run(search(query), { familyId: 'family-1' });
+      expect(result.errors?.[0]?.extensions?.code).toBe('BAD_USER_INPUT');
+      expect(books.search).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is FORBIDDEN before there is a family, and never calls the catalog', async () => {
+    const result = await run(search('dog man'));
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(books.search).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['unauthorized', 'BOOK_SOURCE_UNAUTHORIZED', 'Hardcover token needs to be renewed'],
+    ['rate_limited', 'BOOK_SOURCE_RATE_LIMITED', 'busy'],
+    ['timeout', 'BOOK_SOURCE_TIMEOUT', 'too long'],
+    ['unavailable', 'BOOK_SOURCE_UNAVAILABLE', 'unavailable'],
+  ] as const)('reports a %s catalog failure as %s, without the catalog’s own message', async (code, graphqlCode, text) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    books.search.mockRejectedValue(new BookSourceError(code, 'api.hardcover.app said token abc123 is bad', { retryAfterSeconds: 7 }));
+    const result = await run(search('dog man'), { familyId: 'family-1' });
+    const [error] = result.errors ?? [];
+    expect(error?.extensions?.code).toBe(graphqlCode);
+    expect(error?.message).toContain(text);
+    expect(error?.message).not.toContain('abc123');
+    expect(error?.extensions?.retryAfterSeconds).toBe(7);
+  });
+});
+
+describe('importBook', () => {
+  const imp = 'mutation { importBook(sourceId: " 101 ") { id sourceId title publisher } }';
+  const detail = { sourceId: '101', title: 'Dog Man', authors: ['Dav Pilkey'], publisher: 'Graphix' };
+
+  it('caches the full record and returns our id with it', async () => {
+    books.getById.mockResolvedValue(detail);
+    cacheHardcoverBook.mockResolvedValue('book-uuid');
+    const result = await run(imp, { familyId: 'family-1' });
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({ importBook: { id: 'book-uuid', sourceId: '101', title: 'Dog Man', publisher: 'Graphix' } });
+    expect(books.getById).toHaveBeenCalledWith('101');
+    expect(cacheHardcoverBook).toHaveBeenCalledWith(db, detail);
+  });
+
+  it('is NOT_FOUND when the catalog has no such book, and caches nothing', async () => {
+    books.getById.mockResolvedValue(null);
+    const result = await run(imp, { familyId: 'family-1' });
+    expect(result.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
+    expect(cacheHardcoverBook).not.toHaveBeenCalled();
+  });
+
+  it('caches nothing when the catalog fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    books.getById.mockRejectedValue(new BookSourceError('unavailable', 'down'));
+    const result = await run(imp, { familyId: 'family-1' });
+    expect(result.errors?.[0]?.extensions?.code).toBe('BOOK_SOURCE_UNAVAILABLE');
+    expect(cacheHardcoverBook).not.toHaveBeenCalled();
+  });
+
+  it('is FORBIDDEN before there is a family, and touches neither the catalog nor the database', async () => {
+    const result = await run(imp);
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(books.getById).not.toHaveBeenCalled();
+    expect(cacheHardcoverBook).not.toHaveBeenCalled();
   });
 });

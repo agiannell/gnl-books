@@ -347,9 +347,12 @@ export interface BookSource {
 
 **Why Hardcover:** 5,000 req/day free (vs Google Books' 1,000), 60/min, and — decisively — books → editions → ISBNs, authors, covers, and **series** in one graph. Google Books has no series concept, which matters more than it sounds: *Magic Tree House*, *Wings of Fire*, and *Dog Man* are how kids actually think about reading.
 
-- `hardcover.ts` POSTs to `https://api.hardcover.app/v1/graphql` with `Authorization: Bearer <token>` from Secrets Manager.
-  - Search: `search(query: $q, query_type: "Book", per_page: 20) { results }` — `results` is **untyped Typesense JSON**, so parse through a defensive guard that warns and drops malformed entries.
-  - Detail: Hasura-style — `books(where: {id: {_eq: $id}}) { ... contributions(where: {contributor_role: {slug: {_eq: "author"}}}) { author { name } } default_physical_edition { isbn_13 isbn_10 pages publisher { name } } }`
+- `hardcover.ts` uses the official **`@hardcover/sdk`** (0.x; zero dependencies) instead of hand-written GraphQL, and is the only file that imports it. The SDK paces itself from the API's rate-limit headers, retries reads, throws typed errors, and ships a mock transport. The token comes from Secrets Manager. (Verified against the docs on 2026-11-08; the original plan, written from memory, had hand-rolled POSTs and Hasura-style queries.)
+  - **Token scope:** since August 2026 tokens carry scopes. Everything here needs only **`read:catalog`**. Never use an `all` token: it can delete the account if it leaks. Choose a long expiry and note the date.
+  - **Search:** `client.search.books(query, { perPage })`. The hits are Typesense JSON, so `parseHit` reads them as `unknown` and drops (with a warning) anything without an id and a title. Search has a **2-second timeout** (other queries 30 s).
+  - **Detail:** `books.get(id)` plus `books.editions(id)`. ISBNs, publisher and binding live on **editions**, not on the book, so there is no `default_physical_edition`; the first edition (most-read first) with an ISBN-13 is used. Authors are the contributions with a null or "Author" role (illustrators and narrators are excluded).
+  - **Errors:** mapped to `BookSourceError` with a code a UI can act on: `unauthorized` (expired, revoked, or missing scope), `rate_limited` (with `retryAfterSeconds`), `timeout`, `unavailable`.
+  - **Limits and terms:** free plan is 5,000 requests/day, burst 10, 60/minute. Requests must run server-side (never in a browser). A public site must have a DMCA takedown policy for cover images; this app is private behind sign-in. Send a User-Agent.
 - Every book we touch is **cached into our `books` table**, so the library becomes self-sufficient and the quota stops mattering after first touch.
 - **Manual add** covers anything search can't find — which fully neutralizes Hardcover's thinner catalog on obscure and self-published titles.
 

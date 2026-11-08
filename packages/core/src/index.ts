@@ -1,4 +1,12 @@
 export { createDb, withTransaction, type Db, type DbConfig } from './db';
+export { addManualBook, cacheHardcoverBook } from './books/cache';
+export { createHardcoverSource, toBookSourceError, type HardcoverClientLike } from './books/hardcover';
+export {
+  BookSourceError,
+  type BookSearchResult,
+  type BookSource,
+  type BookSourceErrorCode,
+} from './books/types';
 export { AlreadyBootstrappedError, bootstrapFamily, type BootstrapInput } from './bootstrap';
 export { hashPin, PIN_PATTERN, verifyPin } from './pin';
 export {
