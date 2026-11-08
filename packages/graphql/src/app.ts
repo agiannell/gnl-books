@@ -57,16 +57,31 @@ export function lazyParentTokens(loadSecret: () => Promise<string>): ParentToken
   };
 }
 
+// The key the stack generates inside the gnl-books/cdk secret's JSON.
+const PARENT_TOKEN_KEY = 'parentTokenKey';
+
+/** Reads one string out of a JSON secret. Throws if the secret or the key is missing. */
+export function jsonSecretValue(secretString: string | undefined, key: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(secretString ?? '');
+  } catch {
+    throw new Error('The secret is empty or not JSON');
+  }
+  const value = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>)[key] : undefined;
+  if (typeof value !== 'string' || !value) throw new Error(`The secret has no "${key}" value`);
+  return value;
+}
+
 // The signing key lives in Secrets Manager. PARENT_TOKEN_SECRET is for local
 // development only, where there is no secret to read.
 function parentTokenSecret(env: NodeJS.ProcessEnv): () => Promise<string> {
   const local = env.PARENT_TOKEN_SECRET;
   if (local) return async () => local;
-  const secretId = required(env, 'PARENT_TOKEN_SECRET_ARN');
+  const secretId = required(env, 'CDK_SECRET_ARN');
   return async () => {
     const { SecretString } = await new SecretsManagerClient({}).send(new GetSecretValueCommand({ SecretId: secretId }));
-    if (!SecretString) throw new Error('The parent-token secret is empty');
-    return SecretString;
+    return jsonSecretValue(SecretString, PARENT_TOKEN_KEY);
   };
 }
 
