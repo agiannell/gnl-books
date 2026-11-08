@@ -189,7 +189,9 @@ describe('getById', () => {
     expect(await s.getById('999')).toBeNull();
   });
 
-  it.each(['', 'abc', '12abc', '-5', '1.5', 'a1'])('is null for the id %j without asking Hardcover', async (id) => {
+  // Hardcover's ids are 32-bit; a bigger number makes it reject the whole query
+  // (seen live: "lies outside the bounds"), which would read as an outage.
+  it.each(['', 'abc', '12abc', '-5', '1.5', 'a1', '2147483648', '999999999999'])('is null for the id %j without asking Hardcover', async (id) => {
     const { source: s, calls } = source({ book });
     expect(await s.getById(id)).toBeNull();
     expect(calls.get).not.toHaveBeenCalled();
