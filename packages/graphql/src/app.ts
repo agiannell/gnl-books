@@ -1,9 +1,11 @@
 import { ApolloServer } from '@apollo/server';
 import { ApolloServerErrorCode } from '@apollo/server/errors';
 import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/disabled';
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { createDb } from '@gnl-books/core';
 import { createCognitoVerifier } from './auth';
 import { buildContext, type Context } from './context';
+import { createParentTokens, type ParentTokens } from './parentToken';
 import { schema } from './schema';
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -34,10 +36,45 @@ export function createServer(): ApolloServer<Context> {
   });
 }
 
+/**
+ * Builds the parent-token signer on first use, not at startup, so requests that
+ * carry no unlock token never wait for the secret. A failed load is not cached.
+ */
+export function lazyParentTokens(loadSecret: () => Promise<string>): ParentTokens {
+  let ready: Promise<ParentTokens> | undefined;
+  const tokens = () => {
+    ready ??= loadSecret()
+      .then((secret) => createParentTokens(secret))
+      .catch((error) => {
+        ready = undefined;
+        throw error;
+      });
+    return ready;
+  };
+  return {
+    issue: async (args) => (await tokens()).issue(args),
+    verify: async (token, who) => (await tokens()).verify(token, who),
+  };
+}
+
+// The signing key lives in Secrets Manager. PARENT_TOKEN_SECRET is for local
+// development only, where there is no secret to read.
+function parentTokenSecret(env: NodeJS.ProcessEnv): () => Promise<string> {
+  const local = env.PARENT_TOKEN_SECRET;
+  if (local) return async () => local;
+  const secretId = required(env, 'PARENT_TOKEN_SECRET_ARN');
+  return async () => {
+    const { SecretString } = await new SecretsManagerClient({}).send(new GetSecretValueCommand({ SecretId: secretId }));
+    if (!SecretString) throw new Error('The parent-token secret is empty');
+    return SecretString;
+  };
+}
+
 // The one place the server is assembled, so the Lambda and the local dev
 // server cannot drift apart.
 export function createApp(env: NodeJS.ProcessEnv = process.env) {
   const db = createDb({ host: required(env, 'DSQL_ENDPOINT') });
+  const parentTokens = lazyParentTokens(parentTokenSecret(env));
   const verifier = createCognitoVerifier({
     userPoolId: required(env, 'USER_POOL_ID'),
     clientId: [required(env, 'USER_POOL_WEB_CLIENT_ID')],
@@ -45,6 +82,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
   const server = createServer();
   return {
     server,
-    context: (authorization: string | undefined) => buildContext({ db, verifier, authorization }),
+    context: (authorization: string | undefined, parentToken?: string | undefined) =>
+      buildContext({ db, verifier, parentTokens, authorization, parentToken }),
   };
 }

@@ -50,9 +50,11 @@ export interface Books {
 
 export interface Families {
   created_at: Generated<Timestamp>;
+  failed_pin_attempts: number | null;
   id: string;
   name: string;
   parent_pin_hash: string;
+  pin_locked_until: Timestamp | null;
 }
 
 export interface Profiles {

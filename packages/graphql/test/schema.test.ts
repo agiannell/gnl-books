@@ -2,12 +2,16 @@ import { graphql } from 'graphql';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@gnl-books/core';
 
-const { getFamily, bootstrapFamily } = vi.hoisted(() => ({ getFamily: vi.fn(), bootstrapFamily: vi.fn() }));
+const { getFamily, bootstrapFamily, attemptParentUnlock } = vi.hoisted(() => ({
+  getFamily: vi.fn(),
+  bootstrapFamily: vi.fn(),
+  attemptParentUnlock: vi.fn(),
+}));
 // Only what touches the database is mocked; the PIN rule and the error class
 // are the real ones, so these tests cannot drift from core.
 vi.mock('@gnl-books/core', async () => {
   const actual = await vi.importActual<typeof import('@gnl-books/core')>('@gnl-books/core');
-  return { ...actual, getFamily, bootstrapFamily };
+  return { ...actual, getFamily, bootstrapFamily, attemptParentUnlock };
 });
 import { AlreadyBootstrappedError } from '@gnl-books/core';
 
@@ -15,16 +19,28 @@ import type { Context } from '../src/context';
 import { schema } from '../src/schema';
 
 const db = {} as Db;
+const expiresAt = new Date('2026-11-08T12:02:00Z');
+const parentTokens = { issue: vi.fn(), verify: vi.fn() };
 const run = (source: string, context: Partial<Context> = {}) =>
   graphql({
     schema,
     source,
-    contextValue: { db, cognitoSub: 'sub-123', familyId: null, isParent: false, ...context },
+    contextValue: {
+      db,
+      cognitoSub: 'sub-123',
+      familyId: null,
+      isParent: false,
+      parentUnlockStartedAt: null,
+      parentTokens,
+      ...context,
+    },
   });
 
 beforeEach(() => {
   getFamily.mockReset();
   bootstrapFamily.mockReset();
+  attemptParentUnlock.mockReset();
+  parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
 });
 
 describe('me', () => {
@@ -130,5 +146,71 @@ describe('createFamily', () => {
     const result = await run('mutation { createFamily(familyName: "G") { id } }');
     expect(result.errors?.[0]?.message).toMatch(/required/i);
     expect(bootstrapFamily).not.toHaveBeenCalled();
+  });
+});
+
+describe('unlockParent', () => {
+  const unlock = (pin = '4821') => `mutation { unlockParent(pin: "${pin}") { token expiresAt } }`;
+  const member = { familyId: 'family-1' };
+
+  it('returns a token for the right PIN, issued for the verified user and family', async () => {
+    attemptParentUnlock.mockResolvedValue({ ok: true });
+    const result = await run(unlock(), { ...member, cognitoSub: 'sub-from-token' });
+    expect(result).toEqual({
+      data: { unlockParent: { token: 'new-token', expiresAt: '2026-11-08T12:02:00.000Z' } },
+    });
+    expect(attemptParentUnlock).toHaveBeenCalledWith(db, 'family-1', '4821');
+    // A fresh unlock has no `startedAt`: the cap counts from now.
+    expect(parentTokens.issue).toHaveBeenCalledWith({ sub: 'sub-from-token', familyId: 'family-1' });
+  });
+
+  it('says how many tries are left after a wrong PIN, and issues nothing', async () => {
+    attemptParentUnlock.mockResolvedValue({ ok: false, reason: 'wrong', attemptsRemaining: 3 });
+    const result = await run(unlock('0000'), member);
+    expect(result.errors?.[0]?.extensions).toMatchObject({ code: 'PIN_INCORRECT', attemptsRemaining: 3 });
+    expect(result.data).toBeNull();
+    expect(parentTokens.issue).not.toHaveBeenCalled();
+  });
+
+  it('says when to try again once locked, and issues nothing', async () => {
+    const until = new Date('2026-11-08T12:15:00Z');
+    attemptParentUnlock.mockResolvedValue({ ok: false, reason: 'locked', until });
+    const result = await run(unlock(), member);
+    expect(result.errors?.[0]?.extensions).toMatchObject({ code: 'PIN_LOCKED', retryAt: '2026-11-08T12:15:00.000Z' });
+    expect(parentTokens.issue).not.toHaveBeenCalled();
+  });
+
+  it.each(['123', '123456789', 'abcd', ''])('rejects the malformed PIN %j without counting it as a guess', async (pin) => {
+    const result = await run(unlock(pin), member);
+    expect(result.errors?.[0]?.extensions?.code).toBe('BAD_USER_INPUT');
+    expect(attemptParentUnlock).not.toHaveBeenCalled();
+  });
+
+  it('is FORBIDDEN before there is a family to unlock', async () => {
+    const result = await run(unlock());
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(attemptParentUnlock).not.toHaveBeenCalled();
+  });
+});
+
+describe('renewParentUnlock', () => {
+  const renew = 'mutation { renewParentUnlock { token expiresAt } }';
+
+  it('is FORBIDDEN for someone who has not unlocked, and issues nothing', async () => {
+    const result = await run(renew, { familyId: 'family-1', isParent: false });
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(parentTokens.issue).not.toHaveBeenCalled();
+  });
+
+  it('renews for an unlocked parent, keeping the original start so the cap still applies', async () => {
+    const startedAt = new Date('2026-11-08T11:58:00Z');
+    const result = await run(renew, {
+      familyId: 'family-1',
+      isParent: true,
+      parentUnlockStartedAt: startedAt,
+      cognitoSub: 'sub-123',
+    });
+    expect(result.data).toEqual({ renewParentUnlock: { token: 'new-token', expiresAt: '2026-11-08T12:02:00.000Z' } });
+    expect(parentTokens.issue).toHaveBeenCalledWith({ sub: 'sub-123', familyId: 'family-1', startedAt });
   });
 });

@@ -14,11 +14,15 @@ const verifier = {
   }),
 };
 
-const build = (authorization: string | undefined) => buildContext({ db, verifier, authorization });
+const parentTokens = { issue: vi.fn(), verify: vi.fn() };
+
+const build = (authorization: string | undefined, parentToken?: string) =>
+  buildContext({ db, verifier, parentTokens, authorization, parentToken });
 
 beforeEach(() => {
   findFamilyIdForAccount.mockReset();
   verifier.verify.mockClear();
+  parentTokens.verify.mockReset();
 });
 
 describe('buildContext', () => {
@@ -49,11 +53,64 @@ describe('buildContext', () => {
     findFamilyIdForAccount.mockResolvedValue('family-1');
     const ctx = await build('Bearer good');
     expect(findFamilyIdForAccount).toHaveBeenCalledWith(db, 'sub-123');
-    expect(ctx).toEqual({ db, cognitoSub: 'sub-123', familyId: 'family-1', isParent: false });
+    expect(ctx).toEqual({
+      db,
+      cognitoSub: 'sub-123',
+      familyId: 'family-1',
+      isParent: false,
+      parentUnlockStartedAt: null,
+      parentTokens,
+    });
   });
 
   it('has no family before first-run bootstrap', async () => {
     findFamilyIdForAccount.mockResolvedValue(undefined);
     expect((await build('Bearer good')).familyId).toBeNull();
+  });
+});
+
+describe('buildContext: the parent unlock token', () => {
+  const startedAt = new Date('2026-11-08T12:00:00Z');
+
+  it('makes the caller a parent when the token verifies', async () => {
+    findFamilyIdForAccount.mockResolvedValue('family-1');
+    parentTokens.verify.mockResolvedValue({ startedAt });
+    const ctx = await build('Bearer good', 'unlock-token');
+    expect(ctx).toMatchObject({ isParent: true, parentUnlockStartedAt: startedAt });
+  });
+
+  it('checks the token against the verified user and family, not anything the client sent', async () => {
+    findFamilyIdForAccount.mockResolvedValue('family-1');
+    parentTokens.verify.mockResolvedValue({ startedAt });
+    await build('Bearer good', 'unlock-token');
+    expect(parentTokens.verify).toHaveBeenCalledWith('unlock-token', { sub: 'sub-123', familyId: 'family-1' });
+  });
+
+  it('is not a parent, and not an error, when the token is expired or forged', async () => {
+    findFamilyIdForAccount.mockResolvedValue('family-1');
+    parentTokens.verify.mockResolvedValue(null);
+    const ctx = await build('Bearer good', 'stale-token');
+    expect(ctx).toMatchObject({ isParent: false, parentUnlockStartedAt: null });
+  });
+
+  it('does not touch the token machinery when no token was sent', async () => {
+    findFamilyIdForAccount.mockResolvedValue('family-1');
+    const ctx = await build('Bearer good');
+    expect(ctx.isParent).toBe(false);
+    expect(parentTokens.verify).not.toHaveBeenCalled();
+  });
+
+  it('ignores a token from someone with no family', async () => {
+    findFamilyIdForAccount.mockResolvedValue(undefined);
+    const ctx = await build('Bearer good', 'unlock-token');
+    expect(ctx.isParent).toBe(false);
+    expect(parentTokens.verify).not.toHaveBeenCalled();
+  });
+
+  it('still rejects a missing bearer token even if an unlock token is present', async () => {
+    await expect(build(undefined, 'unlock-token')).rejects.toMatchObject({
+      extensions: { code: 'UNAUTHENTICATED' },
+    });
+    expect(parentTokens.verify).not.toHaveBeenCalled();
   });
 });

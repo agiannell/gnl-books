@@ -13,11 +13,13 @@
   "dependencies": {
     "@apollo/server": "^5.5.1",
     "@as-integrations/aws-lambda": "^4.1.0",
+    "@aws-sdk/client-secrets-manager": "^3.1164.0",
     "@gnl-books/core": "0.1.0",
     "@pothos/core": "^4.16.0",
     "@pothos/plugin-scope-auth": "^4.2.2",
     "aws-jwt-verify": "^5.2.1",
-    "graphql": "^16.11.0"
+    "graphql": "^16.11.0",
+    "jose": "^6.2.15"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.164",
