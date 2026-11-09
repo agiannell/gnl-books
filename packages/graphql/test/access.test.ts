@@ -71,6 +71,9 @@ describe('unauthenticated access', () => {
     ['a book import', { query: 'mutation { importBook(sourceId: "1") { id } }' }],
     ['a profile lookup', { query: '{ profile(id: "p-1") { name } }' }],
     ['a profile creation', { query: 'mutation { createProfile(input: { name: "A" }) { id } }' }],
+    ['rating a book', { query: 'mutation { rateBook(shelfEntryId: "e", rating: 5) { id } }' }],
+    ['reviewing a book', { query: 'mutation { reviewBook(shelfEntryId: "e", review: "x") { id } }' }],
+    ['finishing a book', { query: 'mutation { finishBook(shelfEntryId: "e") { id } }' }],
     ['shelving a book', { query: 'mutation { addToShelf(profileId: "p", bookId: "b", shelf: READ) { id } }' }],
   ])('refuses %s with a 401 and no data', async (_name, body) => {
     catalogCalls.mockClear();

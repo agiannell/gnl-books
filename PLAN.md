@@ -221,10 +221,10 @@ type Query {
 
 type Mutation {
   addToShelf(profileId: ID!, book: BookInput!, shelf: Shelf!): ShelfEntry!
-  rateBook(shelfEntryId: ID!, rating: Int!): ShelfEntry!
-  reviewBook(shelfEntryId: ID!, review: String!): ShelfEntry!
+  rateBook(shelfEntryId: ID!, rating: Int): ShelfEntry!   # 1-5; null clears
+  reviewBook(shelfEntryId: ID!, review: String!): ShelfEntry!   # blank clears; max 5000 chars
   logProgress(shelfEntryId: ID!, page: Int, pagesRead: Int, source: ProgressSource!): ShelfEntry!
-  finishBook(shelfEntryId: ID!, dateRead: Date, rating: Int): ShelfEntry!
+  finishBook(shelfEntryId: ID!, dateRead: String, rating: Int): ShelfEntry!   # YYYY-MM-DD, never after the family's today
   setGoal(profileId: ID!, year: Int!, target: Int!): ReadingGoal!
   exportGoodreadsCsv(profileId: ID!): String!        # parent-only
   createProfile(input: CreateProfileInput!): Profile! # parent-only

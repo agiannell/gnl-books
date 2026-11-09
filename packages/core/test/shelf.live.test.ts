@@ -6,7 +6,7 @@ import { addManualBook } from '../src/books/cache';
 import { createDb, type Db } from '../src/db';
 import { DEFAULT_TIMEZONE } from '../src/families';
 import { createProfile } from '../src/profiles';
-import { addToShelf, listShelf } from '../src/shelf';
+import { addToShelf, DateInFutureError, finishEntry, listShelf, rateEntry, reviewEntry } from '../src/shelf';
 
 // Runs against the real cluster; skipped unless DSQL_ENDPOINT is set. Every row
 // it makes is removed afterwards.
@@ -46,7 +46,8 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
     }
     if (bookIds.length) await db.deleteFrom('books').where('id', 'in', bookIds).execute();
     await db.destroy();
-  });
+    // Each family takes four statements to remove, and there are dozens.
+  }, 120_000);
 
   // The calendar date right now in a zone, computed by the database.
   const today = async (zone = DEFAULT_TIMEZONE) =>
@@ -166,6 +167,94 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
     const { familyId, kidId } = await newFamily();
     expect(await addToShelf(db, familyId, kidId, randomUUID(), 'read')).toBeUndefined();
     expect(await listShelf(db, familyId, kidId)).toEqual([]);
+  });
+
+  describe('editing an entry', () => {
+    const shelved = async (shelf: 'to-read' | 'currently-reading' | 'read' = 'currently-reading') => {
+      const family = await newFamily();
+      const entry = await addToShelf(db, family.familyId, family.kidId, await newBook(), shelf);
+      return { ...family, entry: entry! };
+    };
+    const setZone = (familyId: string, zone: string) =>
+      db.updateTable('families').set({ timezone: zone }).where('id', '=', familyId).execute();
+
+    it('rates, re-rates and clears', async () => {
+      const { familyId, entry } = await shelved();
+      expect((await rateEntry(db, familyId, entry.id, 4))!.rating).toBe(4);
+      expect((await rateEntry(db, familyId, entry.id, 2))!.rating).toBe(2);
+      expect((await rateEntry(db, familyId, entry.id, null))!.rating).toBeNull();
+    });
+
+    it('does not rate a book onto the wrong shelf or change anything else', async () => {
+      const { familyId, entry } = await shelved('to-read');
+      const rated = await rateEntry(db, familyId, entry.id, 5);
+      expect(rated).toMatchObject({ shelf: 'to-read', dateRead: null, review: null });
+    });
+
+    it('writes and clears a review', async () => {
+      const { familyId, entry } = await shelved();
+      expect((await reviewEntry(db, familyId, entry.id, 'Loved it 🐶'))!.review).toBe('Loved it 🐶');
+      expect((await reviewEntry(db, familyId, entry.id, null))!.review).toBeNull();
+    });
+
+    it('finishes a book: read shelf, finish date today in the family’s zone, start date kept', async () => {
+      const { familyId, entry } = await shelved('currently-reading');
+      const done = await finishEntry(db, familyId, entry.id);
+      expect(done).toMatchObject({ shelf: 'read', dateStarted: entry.dateStarted, rating: null, readCount: 1 });
+      expect(done!.dateRead).toBe(await today());
+    });
+
+    it.each(['Pacific/Kiritimati', 'Pacific/Pago_Pago'])('stamps the finish date in the family zone (%s)', async (zone) => {
+      const { familyId, entry } = await shelved('to-read');
+      await setZone(familyId, zone);
+      expect((await finishEntry(db, familyId, entry.id))!.dateRead).toBe(await today(zone));
+    });
+
+    it('uses the date given, and a later finish without one keeps it', async () => {
+      const { familyId, entry } = await shelved();
+      expect((await finishEntry(db, familyId, entry.id, { dateRead: '2025-12-31' }))!.dateRead).toBe('2025-12-31');
+      expect((await finishEntry(db, familyId, entry.id))!.dateRead).toBe('2025-12-31');
+      expect((await finishEntry(db, familyId, entry.id, { dateRead: '2026-01-01' }))!.dateRead).toBe('2026-01-01');
+    });
+
+    it('sets the rating with the finish, and keeps the existing one when none is given', async () => {
+      const { familyId, entry } = await shelved();
+      expect((await finishEntry(db, familyId, entry.id, { rating: 5 }))!.rating).toBe(5);
+      expect((await finishEntry(db, familyId, entry.id))!.rating).toBe(5);
+    });
+
+    it('refuses a finish date after the family’s today, and changes nothing', async () => {
+      const { familyId, entry } = await shelved('currently-reading');
+      // Kiritimati is always at least a calendar day ahead of Pago Pago.
+      await setZone(familyId, 'Pacific/Pago_Pago');
+      await expect(finishEntry(db, familyId, entry.id, { dateRead: await today('Pacific/Kiritimati'), rating: 3 })).rejects.toThrow(
+        DateInFutureError,
+      );
+      expect((await listShelf(db, familyId, entry.profileId))[0]).toMatchObject({ shelf: 'currently-reading', dateRead: null, rating: null });
+    });
+
+    it('accepts a date that is today only because of the family’s zone', async () => {
+      const { familyId, entry } = await shelved('currently-reading');
+      await setZone(familyId, 'Pacific/Kiritimati');
+      const date = await today('Pacific/Kiritimati');
+      expect((await finishEntry(db, familyId, entry.id, { dateRead: date }))!.dateRead).toBe(date);
+    });
+
+    it('treats another family’s entry, and a malformed or unknown id, as missing, for every edit', async () => {
+      const mine = await newFamily();
+      const theirs = await shelved('currently-reading');
+      for (const id of [theirs.entry.id, randomUUID(), 'abc', '', "x'; --"]) {
+        expect(await rateEntry(db, mine.familyId, id, 5)).toBeUndefined();
+        expect(await reviewEntry(db, mine.familyId, id, 'mine now')).toBeUndefined();
+        expect(await finishEntry(db, mine.familyId, id)).toBeUndefined();
+      }
+      expect((await listShelf(db, theirs.familyId, theirs.entry.profileId))[0]).toMatchObject({
+        shelf: 'currently-reading',
+        rating: null,
+        review: null,
+        dateRead: null,
+      });
+    });
   });
 
   it.each(['', 'abc', "x'; drop table books; --"])('is undefined, not a server error, for the malformed id %j', async (bad) => {

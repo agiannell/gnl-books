@@ -12,6 +12,9 @@ const {
   createProfile,
   addToShelf,
   listShelf,
+  rateEntry,
+  reviewEntry,
+  finishEntry,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   bootstrapFamily: vi.fn(),
@@ -22,6 +25,9 @@ const {
   createProfile: vi.fn(),
   addToShelf: vi.fn(),
   listShelf: vi.fn(),
+  rateEntry: vi.fn(),
+  reviewEntry: vi.fn(),
+  finishEntry: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -38,9 +44,12 @@ vi.mock('@gnl-books/core', async () => {
     createProfile,
     addToShelf,
     listShelf,
+    rateEntry,
+    reviewEntry,
+    finishEntry,
   };
 });
-import { AlreadyBootstrappedError, BookSourceError, TooManyProfilesError } from '@gnl-books/core';
+import { AlreadyBootstrappedError, BookSourceError, DateInFutureError, TooManyProfilesError } from '@gnl-books/core';
 
 import type { Context } from '../src/context';
 import { schema } from '../src/schema';
@@ -75,6 +84,9 @@ beforeEach(() => {
   createProfile.mockReset();
   addToShelf.mockReset();
   listShelf.mockReset();
+  rateEntry.mockReset();
+  reviewEntry.mockReset();
+  finishEntry.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -506,5 +518,140 @@ describe('Profile.shelf', () => {
 
     await run(q('(shelf: TO_READ)'), { familyId: 'family-1' });
     expect(listShelf).toHaveBeenLastCalledWith(db, 'family-1', 'p-1', 'to-read');
+  });
+});
+
+describe('rating, reviewing and finishing', () => {
+  const entry = {
+    id: 'e-1',
+    profileId: 'p-1',
+    shelf: 'read',
+    rating: 4,
+    review: 'Good',
+    dateAdded: '2026-11-08',
+    dateStarted: null,
+    dateRead: '2026-11-09',
+    readCount: 1,
+    currentPage: null,
+    owned: false,
+    tags: [],
+    book: { id: 'b-1', sourceId: null, title: 'My Book', authors: [] },
+  };
+  const family = { familyId: 'family-1' };
+  const rate = (rating: string) => `mutation { rateBook(shelfEntryId: "e-1", rating: ${rating}) { rating } }`;
+  const review = (text: string) => `mutation { reviewBook(shelfEntryId: "e-1", review: ${JSON.stringify(text)}) { review } }`;
+  const finish = (args = '') => `mutation { finishBook(shelfEntryId: "e-1"${args}) { shelf dateRead rating } }`;
+  const code = (r: { errors?: readonly { extensions?: Record<string, unknown> }[] }) => r.errors?.[0]?.extensions?.code;
+
+  describe('rateBook', () => {
+    it.each([1, 3, 5])('rates %i in the caller’s family', async (n) => {
+      rateEntry.mockResolvedValue({ ...entry, rating: n });
+      const result = await run(rate(String(n)), family);
+      expect(result.data).toEqual({ rateBook: { rating: n } });
+      expect(rateEntry).toHaveBeenCalledWith(db, 'family-1', 'e-1', n);
+    });
+
+    it('clears the rating with null', async () => {
+      rateEntry.mockResolvedValue({ ...entry, rating: null });
+      await run(rate('null'), family);
+      expect(rateEntry).toHaveBeenCalledWith(db, 'family-1', 'e-1', null);
+    });
+
+    it.each(['0', '6', '-1', '100'])('refuses %s as BAD_USER_INPUT, without touching the database', async (n) => {
+      expect(code(await run(rate(n), family))).toBe('BAD_USER_INPUT');
+      expect(rateEntry).not.toHaveBeenCalled();
+    });
+
+    it('is NOT_FOUND for an entry outside the family', async () => {
+      rateEntry.mockResolvedValue(undefined);
+      expect(code(await run(rate('3'), family))).toBe('NOT_FOUND');
+    });
+
+    it('is FORBIDDEN before there is a family, without touching the database', async () => {
+      expect(code(await run(rate('3')))).toBe('FORBIDDEN');
+      expect(rateEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reviewBook', () => {
+    it('saves the trimmed text', async () => {
+      reviewEntry.mockResolvedValue(entry);
+      await run(review('  Loved it  '), family);
+      expect(reviewEntry).toHaveBeenCalledWith(db, 'family-1', 'e-1', 'Loved it');
+    });
+
+    it('clears the review when it is blank', async () => {
+      reviewEntry.mockResolvedValue({ ...entry, review: null });
+      await run(review('   '), family);
+      expect(reviewEntry).toHaveBeenCalledWith(db, 'family-1', 'e-1', null);
+    });
+
+    it('accepts 5000 characters and refuses 5001', async () => {
+      reviewEntry.mockResolvedValue(entry);
+      expect((await run(review('x'.repeat(5000)), family)).errors).toBeUndefined();
+      reviewEntry.mockClear();
+      expect(code(await run(review('x'.repeat(5001)), family))).toBe('BAD_USER_INPUT');
+      expect(reviewEntry).not.toHaveBeenCalled();
+    });
+
+    it('is NOT_FOUND for an entry outside the family, and FORBIDDEN with no family', async () => {
+      reviewEntry.mockResolvedValue(undefined);
+      expect(code(await run(review('hi'), family))).toBe('NOT_FOUND');
+      reviewEntry.mockClear();
+      expect(code(await run(review('hi')))).toBe('FORBIDDEN');
+      expect(reviewEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('finishBook', () => {
+    it('finishes with no date or rating, leaving both to the data layer', async () => {
+      finishEntry.mockResolvedValue(entry);
+      const result = await run(finish(), family);
+      expect(result.data).toEqual({ finishBook: { shelf: 'READ', dateRead: '2026-11-09', rating: 4 } });
+      expect(finishEntry).toHaveBeenCalledWith(db, 'family-1', 'e-1', { dateRead: undefined, rating: undefined });
+    });
+
+    it('passes the date and rating given', async () => {
+      finishEntry.mockResolvedValue(entry);
+      await run(finish(', dateRead: " 2025-02-28 ", rating: 5'), family);
+      expect(finishEntry).toHaveBeenCalledWith(db, 'family-1', 'e-1', { dateRead: '2025-02-28', rating: 5 });
+    });
+
+    it.each(['2026-02-30', '2026-13-01', '26-1-1', 'yesterday', '2026-11-08T10:00:00Z', '0001-01-01', "2026-01-01'; --"])(
+      'refuses the date %j as BAD_USER_INPUT, without touching the database',
+      async (date) => {
+        expect(code(await run(finish(`, dateRead: ${JSON.stringify(date)}`), family))).toBe('BAD_USER_INPUT');
+        expect(finishEntry).not.toHaveBeenCalled();
+      },
+    );
+
+    it('accepts 29 February in a leap year', async () => {
+      finishEntry.mockResolvedValue(entry);
+      expect((await run(finish(', dateRead: "2024-02-29"'), family)).errors).toBeUndefined();
+    });
+
+    it('refuses a rating out of range', async () => {
+      expect(code(await run(finish(', rating: 9'), family))).toBe('BAD_USER_INPUT');
+      expect(finishEntry).not.toHaveBeenCalled();
+    });
+
+    it('reports a future date as BAD_USER_INPUT', async () => {
+      finishEntry.mockRejectedValue(new DateInFutureError());
+      expect(code(await run(finish(', dateRead: "2999-01-01"'), family))).toBe('BAD_USER_INPUT');
+    });
+
+    it('does not dress an unexpected failure up as a user error', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      finishEntry.mockRejectedValue(new Error('connection reset'));
+      expect(code(await run(finish(), family))).not.toBe('BAD_USER_INPUT');
+    });
+
+    it('is NOT_FOUND for an entry outside the family, and FORBIDDEN with no family', async () => {
+      finishEntry.mockResolvedValue(undefined);
+      expect(code(await run(finish(), family))).toBe('NOT_FOUND');
+      finishEntry.mockClear();
+      expect(code(await run(finish()))).toBe('FORBIDDEN');
+      expect(finishEntry).not.toHaveBeenCalled();
+    });
   });
 });
