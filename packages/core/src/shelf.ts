@@ -96,24 +96,44 @@ const toEntry = (row: EntryRow): ShelfEntry => ({
   currentPage: row.current_page,
   owned: row.owned,
   tags: row.tags,
-  book: {
-    id: row.book_id,
-    sourceId: row.source_id,
-    title: row.title,
-    subtitle: row.subtitle,
-    authors: row.authors,
-    isbn13: row.isbn13,
-    isbn10: row.isbn10,
-    pages: row.pages,
-    releaseYear: row.release_year,
-    coverUrl: row.cover_url,
-    seriesName: row.series_name,
-    // numeric comes back as text padded to the column's scale ("2.500000").
-    seriesPosition: row.series_position === null ? null : Number(row.series_position),
-    description: row.description,
-    publisher: row.publisher,
-    binding: row.binding,
-  },
+  book: toBook({ ...row, id: row.book_id }),
+});
+
+type BookRow = Pick<
+  Awaited<ReturnType<ReturnType<typeof entries>['executeTakeFirstOrThrow']>>,
+  | 'source_id'
+  | 'title'
+  | 'subtitle'
+  | 'authors'
+  | 'isbn13'
+  | 'isbn10'
+  | 'pages'
+  | 'release_year'
+  | 'cover_url'
+  | 'series_name'
+  | 'series_position'
+  | 'description'
+  | 'publisher'
+  | 'binding'
+> & { id: string };
+
+const toBook = (row: BookRow): StoredBook => ({
+  id: row.id,
+  sourceId: row.source_id,
+  title: row.title,
+  subtitle: row.subtitle,
+  authors: row.authors,
+  isbn13: row.isbn13,
+  isbn10: row.isbn10,
+  pages: row.pages,
+  releaseYear: row.release_year,
+  coverUrl: row.cover_url,
+  seriesName: row.series_name,
+  // numeric comes back as text padded to the column's scale ("2.500000").
+  seriesPosition: row.series_position === null ? null : Number(row.series_position),
+  description: row.description,
+  publisher: row.publisher,
+  binding: row.binding,
 });
 
 /**
@@ -368,13 +388,24 @@ export async function removeEntry(db: Db, familyId: string, entryId: string): Pr
     .where('p.family_id', '=', familyId)
     .executeTakeFirst();
   if (!owned) return false;
+  return (await deleteEntries(db, [entryId])) > 0;
+}
 
+/**
+ * Deletes entries and their progress logs, which go in batches first (the entries
+ * go last, so an interrupted delete can be run again). The caller has already
+ * checked the entries are in the right family, and passes a bounded list: the
+ * final transaction deletes all of them at once, under DSQL's row cap.
+ * Returns how many entries were deleted.
+ */
+export async function deleteEntries(db: Db, entryIds: string[]): Promise<number> {
+  if (entryIds.length === 0) return 0;
   for (;;) {
     const deleted = await withTransaction(db, async (trx) => {
       const batch = await trx
         .selectFrom('progress_events')
         .select('id')
-        .where('shelf_entry_id', '=', entryId)
+        .where('shelf_entry_id', 'in', entryIds)
         .limit(EVENT_DELETE_BATCH)
         .execute();
       if (batch.length === 0) return 0;
@@ -386,10 +417,34 @@ export async function removeEntry(db: Db, familyId: string, entryId: string): Pr
 
   return withTransaction(db, async (trx) => {
     // Anything logged since the last batch (a handful at most).
-    await trx.deleteFrom('progress_events').where('shelf_entry_id', '=', entryId).execute();
-    const result = await trx.deleteFrom('shelf_entries').where('id', '=', entryId).executeTakeFirst();
-    return result.numDeletedRows > 0n;
+    await trx.deleteFrom('progress_events').where('shelf_entry_id', 'in', entryIds).execute();
+    const result = await trx.deleteFrom('shelf_entries').where('id', 'in', entryIds).executeTakeFirst();
+    return Number(result.numDeletedRows);
   });
+}
+
+/** Entries deleted per round when a whole profile goes. */
+export const PROFILE_DELETE_BATCH = 500;
+
+/** Deletes every entry a profile has, with their logs, a batch of entries at a time. */
+export async function deleteProfileEntries(db: Db, profileId: string): Promise<void> {
+  for (;;) {
+    const batch = await db
+      .selectFrom('shelf_entries')
+      .select('id')
+      .where('profile_id', '=', profileId)
+      .limit(PROFILE_DELETE_BATCH)
+      .execute();
+    if (batch.length === 0) return;
+    await deleteEntries(db, batch.map((e) => e.id));
+  }
+}
+
+/** One book by our id, or undefined for an unknown or malformed id. */
+export async function getBook(db: Db, bookId: string): Promise<StoredBook | undefined> {
+  if (!isUuid(bookId)) return undefined;
+  const row = await db.selectFrom('books').selectAll().where('id', '=', bookId).executeTakeFirst();
+  return row && toBook(row);
 }
 
 /** A profile's entries, newest first, optionally one shelf. Empty for a profile outside this family. */
