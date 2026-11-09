@@ -377,7 +377,7 @@ Bookshelves, Bookshelves with positions, Exclusive Shelf,
 My Review, Spoiler, Private Notes, Read Count, Owned Copies
 ```
 
-Rules in `packages/core/csv.ts`:
+Rules in `packages/core/src/csv.ts` (built; `Average Rating`, `Bookshelves with positions`, `Spoiler`, `Private Notes` and `Original Publication Year` are written blank for now):
 - `Book Id` blank — Goodreads assigns its own on import.
 - Dates as `YYYY/MM/DD` (Goodreads' own export format).
 - `My Rating` is `0` when unrated, not blank.

@@ -75,6 +75,7 @@ describe('unauthenticated access', () => {
     ['reviewing a book', { query: 'mutation { reviewBook(shelfEntryId: "e", review: "x") { id } }' }],
     ['logging progress', { query: 'mutation { logProgress(shelfEntryId: "e", pagesRead: 5, source: WEB) { id } }' }],
     ['adding a book by hand', { query: 'mutation { addManualBook(input: { title: "T", authors: ["A"] }) { id } }' }],
+    ['exporting a shelf', { query: 'mutation { exportGoodreadsCsv(profileId: "p") }' }],
     ['removing a book from a shelf', { query: 'mutation { removeFromShelf(shelfEntryId: "e") }' }],
     ['setting a goal', { query: 'mutation { setGoal(profileId: "p", year: 2026, target: 5) { year } }' }],
     ['finishing a book', { query: 'mutation { finishBook(shelfEntryId: "e") { id } }' }],

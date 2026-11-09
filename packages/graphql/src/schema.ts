@@ -21,6 +21,7 @@ import {
   MAX_GOAL_YEAR,
   ProgressRejectedError,
   rateEntry,
+  exportGoodreadsCsv,
   removeEntry,
   reviewEntry,
   setGoal,
@@ -601,6 +602,18 @@ builder.mutationType({
           throw new GraphQLError('Shelf entry not found', { extensions: { code: 'NOT_FOUND' } });
         }
         return true;
+      },
+    }),
+
+    // One profile's whole shelf as a Goodreads import file. Parent-only (see
+    // PLAN.md); the browser turns the string into a download.
+    exportGoodreadsCsv: t.string({
+      authScopes: { isParent: true },
+      args: { profileId: t.arg.id() },
+      resolve: async (_root, args, ctx) => {
+        const csv = await exportGoodreadsCsv(ctx.db, ctx.familyId!, String(args.profileId));
+        if (csv === undefined) throw new GraphQLError('Profile not found', { extensions: { code: 'NOT_FOUND' } });
+        return csv;
       },
     }),
 

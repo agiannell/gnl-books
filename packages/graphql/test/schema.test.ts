@@ -20,6 +20,7 @@ const {
   setGoal,
   addManualBook,
   removeEntry,
+  exportGoodreadsCsv,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   bootstrapFamily: vi.fn(),
@@ -38,6 +39,7 @@ const {
   setGoal: vi.fn(),
   addManualBook: vi.fn(),
   removeEntry: vi.fn(),
+  exportGoodreadsCsv: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -62,6 +64,7 @@ vi.mock('@gnl-books/core', async () => {
     setGoal,
     addManualBook,
     removeEntry,
+    exportGoodreadsCsv,
   };
 });
 import {
@@ -113,6 +116,7 @@ beforeEach(() => {
   setGoal.mockReset();
   addManualBook.mockReset();
   removeEntry.mockReset();
+  exportGoodreadsCsv.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -936,5 +940,32 @@ describe('removeFromShelf', () => {
   it('is NOT_FOUND for an entry outside the family or already removed', async () => {
     removeEntry.mockResolvedValue(false);
     expect(code(await run(remove, { familyId: 'family-1', isParent: true }))).toBe('NOT_FOUND');
+  });
+});
+
+describe('exportGoodreadsCsv', () => {
+  const exportCsv = 'mutation { exportGoodreadsCsv(profileId: "p-1") }';
+  const code = (r: { errors?: readonly { extensions?: Record<string, unknown> }[] }) => r.errors?.[0]?.extensions?.code;
+
+  it('returns the file for an unlocked parent, in the caller’s family', async () => {
+    exportGoodreadsCsv.mockResolvedValue('Title\n');
+    const result = await run(exportCsv, { familyId: 'family-1', isParent: true });
+    expect(result.data).toEqual({ exportGoodreadsCsv: 'Title\n' });
+    expect(exportGoodreadsCsv).toHaveBeenCalledWith(db, 'family-1', 'p-1');
+  });
+
+  it('is FORBIDDEN for a signed-in family member who has not unlocked, without touching the database', async () => {
+    expect(code(await run(exportCsv, { familyId: 'family-1', isParent: false }))).toBe('FORBIDDEN');
+    expect(exportGoodreadsCsv).not.toHaveBeenCalled();
+  });
+
+  it('is FORBIDDEN before there is a family', async () => {
+    expect(code(await run(exportCsv))).toBe('FORBIDDEN');
+    expect(exportGoodreadsCsv).not.toHaveBeenCalled();
+  });
+
+  it('is NOT_FOUND for a profile outside the family', async () => {
+    exportGoodreadsCsv.mockResolvedValue(undefined);
+    expect(code(await run(exportCsv, { familyId: 'family-1', isParent: true }))).toBe('NOT_FOUND');
   });
 });
