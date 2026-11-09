@@ -9,7 +9,11 @@ import {
   getProfile,
   listProfiles,
   addToShelf,
+  DateInFutureError,
+  finishEntry,
   listShelf,
+  rateEntry,
+  reviewEntry,
   PIN_PATTERN,
   TooManyProfilesError,
   type BookSearchResult,
@@ -229,6 +233,25 @@ function requireName(value: string, label: string): string {
   return name;
 }
 
+function requireRating(rating: number): void {
+  if (rating < 1 || rating > 5) throw badInput('Rating must be 1 to 5');
+}
+
+const MAX_REVIEW_CHARACTERS = 5000;
+
+/** A real YYYY-MM-DD date: "2026-02-30" has the right shape and is not one. */
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number) as [number, number, number];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return year >= 1000 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function foundEntry(entry: ShelfEntry | undefined): ShelfEntry {
+  if (!entry) throw new GraphQLError('Shelf entry not found', { extensions: { code: 'NOT_FOUND' } });
+  return entry;
+}
+
 const COLOR = /^#[0-9a-f]{6}$/i;
 const MAX_EMOJI_CHARACTERS = 8;
 
@@ -328,6 +351,57 @@ builder.mutationType({
         const entry = await addToShelf(ctx.db, ctx.familyId!, String(args.profileId), String(args.bookId), args.shelf);
         if (!entry) throw new GraphQLError('Profile or book not found', { extensions: { code: 'NOT_FOUND' } });
         return entry;
+      },
+    }),
+
+    // The three edits below act on an entry id from the client, which the data
+    // layer checks belongs to the caller's family (another family's is NOT_FOUND).
+
+    // A rating of 1 to 5, or null to clear it.
+    rateBook: t.field({
+      type: ShelfEntryRef,
+      authScopes: { inFamily: true },
+      args: { shelfEntryId: t.arg.id(), rating: t.arg.int({ required: false }) },
+      resolve: async (_root, args, ctx) => {
+        const rating = args.rating ?? null;
+        if (rating !== null) requireRating(rating);
+        return foundEntry(await rateEntry(ctx.db, ctx.familyId!, String(args.shelfEntryId), rating));
+      },
+    }),
+
+    // The review text; blank clears it.
+    reviewBook: t.field({
+      type: ShelfEntryRef,
+      authScopes: { inFamily: true },
+      args: { shelfEntryId: t.arg.id(), review: t.arg.string() },
+      resolve: async (_root, args, ctx) => {
+        const review = args.review.trim();
+        if (review.length > MAX_REVIEW_CHARACTERS) throw badInput(`Review must be at most ${MAX_REVIEW_CHARACTERS} characters`);
+        return foundEntry(await reviewEntry(ctx.db, ctx.familyId!, String(args.shelfEntryId), review || null));
+      },
+    }),
+
+    // Moves the book to "read". `dateRead` is a YYYY-MM-DD date (default: today
+    // in the family's zone, or the date already recorded); the future is refused.
+    finishBook: t.field({
+      type: ShelfEntryRef,
+      authScopes: { inFamily: true },
+      args: {
+        shelfEntryId: t.arg.id(),
+        dateRead: t.arg.string({ required: false }),
+        rating: t.arg.int({ required: false }),
+      },
+      resolve: async (_root, args, ctx) => {
+        const dateRead = args.dateRead?.trim() || undefined;
+        if (dateRead !== undefined && !isCalendarDate(dateRead)) throw badInput('Date must look like 2026-11-08');
+        const rating = args.rating ?? undefined;
+        if (rating !== undefined) requireRating(rating);
+        try {
+          return foundEntry(await finishEntry(ctx.db, ctx.familyId!, String(args.shelfEntryId), { dateRead, rating }));
+        } catch (error) {
+          if (error instanceof DateInFutureError) throw badInput(error.message);
+          throw error;
+        }
       },
     }),
 
