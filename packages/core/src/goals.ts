@@ -63,6 +63,19 @@ export async function setGoal(
   });
 }
 
+/** Removes the profile's goal for a year. False when there was none, or the profile is not in this family. */
+export async function removeGoal(db: Db, familyId: string, profileId: string, year: number): Promise<boolean> {
+  return withTransaction(db, async (trx) => {
+    if (!(await familyZone(trx, familyId, profileId))) return false;
+    const result = await trx
+      .deleteFrom('reading_goals')
+      .where('profile_id', '=', profileId)
+      .where('year', '=', year)
+      .executeTakeFirst();
+    return result.numDeletedRows > 0n;
+  });
+}
+
 /**
  * The profile's goal for a year (default: the current year in the family's
  * zone), or undefined when none is set or the profile is not in this family.

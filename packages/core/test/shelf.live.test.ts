@@ -11,6 +11,7 @@ import {
   DateInFutureError,
   EVENT_DELETE_BATCH,
   finishEntry,
+  getBook,
   listShelf,
   logProgress,
   MAX_PAGE,
@@ -352,6 +353,24 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
       }
       expect(await listShelf(db, theirs.familyId, theirs.kidId)).toHaveLength(1);
       expect(await eventCount(theirs.entry.id)).toBe(3);
+    });
+  });
+
+  describe('looking up a book', () => {
+    it('returns the stored book by our id, with the series position as a number', async () => {
+      const id = await newBook('Lookup Book', { seriesPosition: 2.5 });
+      expect(await getBook(db, id)).toMatchObject({
+        id,
+        sourceId: null,
+        title: 'Lookup Book',
+        authors: ['Test Author'],
+        pages: 120,
+        seriesPosition: 2.5,
+      });
+    });
+
+    it('is undefined for an unknown or malformed id', async () => {
+      for (const id of [randomUUID(), 'abc', '', "x'; --"]) expect(await getBook(db, id)).toBeUndefined();
     });
   });
 

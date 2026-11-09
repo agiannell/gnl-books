@@ -21,7 +21,9 @@ export {
 export { DEFAULT_TIMEZONE, findFamilyIdForAccount, getFamily, type Family } from './families';
 export {
   createProfile,
+  deleteProfile,
   getProfile,
+  LastProfileError,
   listProfiles,
   MAX_PROFILES,
   TooManyProfilesError,
@@ -33,6 +35,7 @@ export {
   DateInFutureError,
   EVENT_DELETE_BATCH,
   finishEntry,
+  getBook,
   listShelf,
   localToday,
   logProgress,
@@ -53,6 +56,7 @@ export {
   MAX_GOAL_TARGET,
   MAX_GOAL_YEAR,
   MIN_GOAL_YEAR,
+  removeGoal,
   setGoal,
   type ReadingGoal,
 } from './goals';

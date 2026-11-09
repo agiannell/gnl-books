@@ -6,10 +6,14 @@ import {
   BookSourceError,
   cacheHardcoverBook,
   createProfile,
+  deleteProfile,
+  getBook,
   getFamily,
   getGoal,
   getProfile,
+  LastProfileError,
   listProfiles,
+  removeGoal,
   addToShelf,
   DateInFutureError,
   finishEntry,
@@ -238,6 +242,17 @@ builder.queryType({
         const hits = await viaCatalog(() => ctx.books.search(query));
         return hits.map((hit) => ({ ...hit, id: null }));
       },
+    }),
+
+    // A library book by our id. Null for an unknown or malformed id. Books are
+    // shared across families (they are catalog data), so any signed-in member can
+    // look one up; the id is random, so it cannot be guessed.
+    book: t.field({
+      type: BookRef,
+      nullable: true,
+      authScopes: { inFamily: true },
+      args: { id: t.arg.id() },
+      resolve: async (_root, args, ctx) => (await getBook(ctx.db, String(args.id))) ?? null,
     }),
 
     me: t.field({
@@ -497,6 +512,19 @@ builder.mutationType({
       },
     }),
 
+    // Drops the target for a year. Like setGoal, open to any family member.
+    removeGoal: t.boolean({
+      authScopes: { inFamily: true },
+      args: { profileId: t.arg.id(), year: t.arg.int() },
+      resolve: async (_root, args, ctx) => {
+        requireGoalYear(args.year);
+        if (!(await removeGoal(ctx.db, ctx.familyId!, String(args.profileId), args.year))) {
+          throw new GraphQLError('Goal not found', { extensions: { code: 'NOT_FOUND' } });
+        }
+        return true;
+      },
+    }),
+
     // "I'm on page 120" (`page`) or "I read 30 pages" (`pagesRead`): exactly one.
     // Appends to the progress log and moves the book's current page; a to-read
     // book becomes currently-reading, and a finished one is refused.
@@ -589,6 +617,22 @@ builder.mutationType({
           seriesPosition: null,
           binding: null,
         };
+      },
+    }),
+
+    // Deletes a profile with its shelf, progress logs and goals. Parent-only. The
+    // family's last profile cannot be deleted.
+    deleteProfile: t.boolean({
+      authScopes: { isParent: true },
+      args: { profileId: t.arg.id() },
+      resolve: async (_root, args, ctx) => {
+        try {
+          if (await deleteProfile(ctx.db, ctx.familyId!, String(args.profileId))) return true;
+        } catch (error) {
+          if (error instanceof LastProfileError) throw badInput(error.message);
+          throw error;
+        }
+        throw new GraphQLError('Profile not found', { extensions: { code: 'NOT_FOUND' } });
       },
     }),
 

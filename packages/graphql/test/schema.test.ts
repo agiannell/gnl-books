@@ -21,6 +21,9 @@ const {
   addManualBook,
   removeEntry,
   exportGoodreadsCsv,
+  getBook,
+  removeGoal,
+  deleteProfile,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   bootstrapFamily: vi.fn(),
@@ -40,6 +43,9 @@ const {
   addManualBook: vi.fn(),
   removeEntry: vi.fn(),
   exportGoodreadsCsv: vi.fn(),
+  getBook: vi.fn(),
+  removeGoal: vi.fn(),
+  deleteProfile: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -65,6 +71,9 @@ vi.mock('@gnl-books/core', async () => {
     addManualBook,
     removeEntry,
     exportGoodreadsCsv,
+    getBook,
+    removeGoal,
+    deleteProfile,
   };
 });
 import {
@@ -72,6 +81,7 @@ import {
   BookSourceError,
   DateInFutureError,
   ProgressRejectedError,
+  LastProfileError,
   TooManyProfilesError,
 } from '@gnl-books/core';
 
@@ -117,6 +127,9 @@ beforeEach(() => {
   addManualBook.mockReset();
   removeEntry.mockReset();
   exportGoodreadsCsv.mockReset();
+  getBook.mockReset();
+  removeGoal.mockReset();
+  deleteProfile.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -967,5 +980,81 @@ describe('exportGoodreadsCsv', () => {
   it('is NOT_FOUND for a profile outside the family', async () => {
     exportGoodreadsCsv.mockResolvedValue(undefined);
     expect(code(await run(exportCsv, { familyId: 'family-1', isParent: true }))).toBe('NOT_FOUND');
+  });
+});
+
+const codeOf = (r: { errors?: readonly { extensions?: Record<string, unknown> }[] }) => r.errors?.[0]?.extensions?.code;
+
+describe('book(id)', () => {
+  const q = '{ book(id: "b-1") { id title sourceId authors } }';
+  const stored = { id: 'b-1', sourceId: null, title: 'T', authors: ['A'], subtitle: null };
+
+  it('returns the library book to a signed-in family member', async () => {
+    getBook.mockResolvedValue(stored);
+    const result = await run(q, { familyId: 'family-1' });
+    expect(result.data).toEqual({ book: { id: 'b-1', title: 'T', sourceId: null, authors: ['A'] } });
+    expect(getBook).toHaveBeenCalledWith(db, 'b-1');
+  });
+
+  it('is null for an unknown id', async () => {
+    getBook.mockResolvedValue(undefined);
+    expect((await run(q, { familyId: 'family-1' })).data).toEqual({ book: null });
+  });
+
+  it('is FORBIDDEN before there is a family, without touching the database', async () => {
+    expect(codeOf(await run(q))).toBe('FORBIDDEN');
+    expect(getBook).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeGoal', () => {
+  const remove = (year = 2026) => `mutation { removeGoal(profileId: "p-1", year: ${year}) }`;
+  const family = { familyId: 'family-1' };
+
+  it('removes the goal for any family member, in the caller’s family', async () => {
+    removeGoal.mockResolvedValue(true);
+    expect((await run(remove(), family)).data).toEqual({ removeGoal: true });
+    expect(removeGoal).toHaveBeenCalledWith(db, 'family-1', 'p-1', 2026);
+  });
+
+  it.each([1999, 2101, 2147483647])('refuses year %i as BAD_USER_INPUT, without touching the database', async (year) => {
+    expect(codeOf(await run(remove(year), family))).toBe('BAD_USER_INPUT');
+    expect(removeGoal).not.toHaveBeenCalled();
+  });
+
+  it('is NOT_FOUND when there is no such goal or profile, and FORBIDDEN with no family', async () => {
+    removeGoal.mockResolvedValue(false);
+    expect(codeOf(await run(remove(), family))).toBe('NOT_FOUND');
+    removeGoal.mockClear();
+    expect(codeOf(await run(remove()))).toBe('FORBIDDEN');
+    expect(removeGoal).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteProfile', () => {
+  const del = 'mutation { deleteProfile(profileId: "p-1") }';
+
+  it('deletes the profile for an unlocked parent, in the caller’s family', async () => {
+    deleteProfile.mockResolvedValue(true);
+    expect((await run(del, { familyId: 'family-1', isParent: true })).data).toEqual({ deleteProfile: true });
+    expect(deleteProfile).toHaveBeenCalledWith(db, 'family-1', 'p-1');
+  });
+
+  it('is FORBIDDEN for a family member who has not unlocked, and before there is a family, without touching the database', async () => {
+    expect(codeOf(await run(del, { familyId: 'family-1', isParent: false }))).toBe('FORBIDDEN');
+    expect(codeOf(await run(del))).toBe('FORBIDDEN');
+    expect(deleteProfile).not.toHaveBeenCalled();
+  });
+
+  it('is NOT_FOUND for a profile outside the family', async () => {
+    deleteProfile.mockResolvedValue(false);
+    expect(codeOf(await run(del, { familyId: 'family-1', isParent: true }))).toBe('NOT_FOUND');
+  });
+
+  it('is BAD_USER_INPUT for the family’s last profile', async () => {
+    deleteProfile.mockRejectedValue(new LastProfileError());
+    const result = await run(del, { familyId: 'family-1', isParent: true });
+    expect(codeOf(result)).toBe('BAD_USER_INPUT');
+    expect(result.errors?.[0]?.message).toBe('A family needs at least one profile');
   });
 });

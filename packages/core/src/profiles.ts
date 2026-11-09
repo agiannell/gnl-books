@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { withTransaction, type Db } from './db';
 import { isUuid } from './ids';
+import { deleteProfileEntries } from './shelf';
 
 export interface Profile {
   id: string;
@@ -24,6 +26,13 @@ export class TooManyProfilesError extends Error {
   constructor() {
     super(`A family can have at most ${MAX_PROFILES} profiles`);
     this.name = 'TooManyProfilesError';
+  }
+}
+
+export class LastProfileError extends Error {
+  constructor() {
+    super('A family needs at least one profile');
+    this.name = 'LastProfileError';
   }
 }
 
@@ -58,6 +67,48 @@ export async function getProfile(db: Db, familyId: string, profileId: string): P
     .where('family_id', '=', familyId)
     .executeTakeFirst();
   return row && toProfile(row);
+}
+
+/** Throws unless the family has another profile besides this one. */
+async function requireAnotherProfile(db: Db, familyId: string, profileId: string): Promise<void> {
+  const { n } = await db
+    .selectFrom('profiles')
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .where('family_id', '=', familyId)
+    .where('id', '!=', profileId)
+    .executeTakeFirstOrThrow();
+  if (Number(n) === 0) throw new LastProfileError();
+}
+
+/**
+ * Deletes a profile and everything under it: its shelf with every progress log
+ * (batched and children first, see `deleteProfileEntries`), its goals, and its
+ * Alexa device labels (the devices stay, unassigned). The profile row goes last,
+ * so an interrupted delete leaves the profile in place to be deleted again.
+ *
+ * Refuses to delete the family's last profile. The final transaction rechecks
+ * that and touches the family row, so two simultaneous deletes of the last two
+ * profiles conflict and one retries and is refused, instead of both passing a
+ * check neither's write would disturb. The loser's shelf is already gone by then.
+ *
+ * Returns false when the profile is not in this family.
+ */
+export async function deleteProfile(db: Db, familyId: string, profileId: string): Promise<boolean> {
+  if (!(await getProfile(db, familyId, profileId))) return false;
+  await requireAnotherProfile(db, familyId, profileId);
+  await deleteProfileEntries(db, profileId);
+  return withTransaction(db, async (trx) => {
+    await requireAnotherProfile(trx, familyId, profileId);
+    await trx.updateTable('families').set({ name: sql<string>`name` }).where('id', '=', familyId).execute();
+    await trx.deleteFrom('reading_goals').where('profile_id', '=', profileId).execute();
+    await trx.updateTable('alexa_devices').set({ profile_id: null }).where('profile_id', '=', profileId).execute();
+    const result = await trx
+      .deleteFrom('profiles')
+      .where('id', '=', profileId)
+      .where('family_id', '=', familyId)
+      .executeTakeFirst();
+    return result.numDeletedRows > 0n;
+  });
 }
 
 /**

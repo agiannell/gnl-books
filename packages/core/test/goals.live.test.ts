@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrapFamily } from '../src/bootstrap';
 import { addManualBook } from '../src/books/cache';
 import { createDb, type Db } from '../src/db';
-import { getGoal, setGoal } from '../src/goals';
+import { getGoal, removeGoal, setGoal } from '../src/goals';
 import { createProfile } from '../src/profiles';
 import { addToShelf, type Shelf } from '../src/shelf';
 
@@ -51,6 +51,25 @@ describe.skipIf(!endpoint)('reading goals (live)', () => {
     if (bookIds.length) await db.deleteFrom('books').where('id', 'in', bookIds).execute();
     await db.destroy();
   }, 120_000);
+
+  it('removes one year’s goal and leaves the others', async () => {
+    const { familyId, kidId } = await newFamily();
+    await setGoal(db, familyId, kidId, 2026, 30);
+    await setGoal(db, familyId, kidId, 2025, 10);
+    expect(await removeGoal(db, familyId, kidId, 2026)).toBe(true);
+    expect(await getGoal(db, familyId, kidId, 2026)).toBeUndefined();
+    expect((await getGoal(db, familyId, kidId, 2025))?.target).toBe(10);
+    expect(await removeGoal(db, familyId, kidId, 2026)).toBe(false);
+  });
+
+  it('removes no goal for another family’s profile or a bad id', async () => {
+    const mine = await newFamily();
+    const theirs = await newFamily();
+    await setGoal(db, theirs.familyId, theirs.kidId, 2026, 30);
+    expect(await removeGoal(db, mine.familyId, theirs.kidId, 2026)).toBe(false);
+    expect(await removeGoal(db, mine.familyId, 'nope', 2026)).toBe(false);
+    expect((await getGoal(db, theirs.familyId, theirs.kidId, 2026))?.target).toBe(30);
+  });
 
   it('sets a goal, with nothing read yet', async () => {
     const { familyId, kidId } = await newFamily();

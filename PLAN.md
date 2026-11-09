@@ -228,6 +228,8 @@ type Mutation {
   setGoal(profileId: ID!, year: Int!, target: Int!): ReadingGoal!
   addManualBook(input: ManualBookInput!): Book!        # for a book the catalog can't find; shelve it by the returned id
   removeFromShelf(shelfEntryId: ID!): Boolean!         # parent-only; deletes the entry and its progress log
+  removeGoal(profileId: ID!, year: Int!): Boolean!
+  deleteProfile(profileId: ID!): Boolean!              # parent-only; shelf, logs and goals go too; not the last profile
   exportGoodreadsCsv(profileId: ID!): String!        # parent-only
   createProfile(input: CreateProfileInput!): Profile! # parent-only
   linkAlexaPerson(profileId: ID!, personId: String!): Profile!        # parent-only
@@ -417,7 +419,7 @@ Ordered so the app is genuinely useful partway through, and the risky parts come
 4. **GraphQL API** — Pothos + Apollo Server behind CloudFront `/graphql`, codegen wired into the web build.
 5. **Hardcover `BookSource`** — search, add to shelf, book caching, manual add.
 6. **Shelves** — ratings, reviews, dates, progress, goals in the SPA.
-7. **CSV export** — and immediately validate a real import (see below).
+7. **CSV export** — built; a real import was deliberately skipped (see below).
 8. **Alexa skill** — account linking, reader resolution (`personId` if present, else ask), the seven intents, on shared devices only.
 9. **Widget spike** → only then the real widget.
 
@@ -449,7 +451,7 @@ Deliberately force a concurrent write conflict to prove `withRetry()` actually h
 5. Set a yearly goal; confirm the ring counts only `shelf = 'read'` entries with `date_read` in the current year.
 6. Open the book from another profile — it should show the first kid's rating.
 
-**CSV — the acceptance test that matters.** Export, then create a throwaway Goodreads account and import the file at `goodreads.com/review/import`. Confirm titles, ratings, shelves, and reviews all land. *This is the entire premise of the project — validate it at step 7, not months later.*
+**CSV — the acceptance test that matters.** Export, then create a throwaway Goodreads account and import the file at `goodreads.com/review/import`. Confirm titles, ratings, shelves, and reviews all land. *Decided 2026-11-09: not doing this up front. The export is unit- and live-tested against the format; if a real import fails later, the export gets adjusted then.*
 
 **Alexa** — the early spike is done (see "Spike results"). One open item remains, then the checks below apply at step 8:
 
@@ -480,5 +482,5 @@ At step 8, on a shared device (kitchen Echo / Show 15):
 - **Never guess the reader.** Writing a kid's progress to the wrong sibling is the one error that would actually upset someone, so an unrecognized speaker always falls through to asking.
 - **Widget Data Store API** is the least-documented surface here; the spike exists to find out early.
 - **Hardcover PAT expiry** — choose a long expiry and note the date. An expired token breaks search while cached books keep working, which is a confusing failure mode; surface a clear error in the UI.
-- **Goodreads could change or drop CSV import.** Low likelihood, but it's the project's load-bearing assumption — hence validating a real import early.
+- **Goodreads could change or drop CSV import.** Low likelihood, but it's the project's load-bearing assumption. A real import has not been tried (skipped by decision, 2026-11-09), so this risk is open until someone needs the export.
 - **Cognito refresh-token expiry** on the Alexa link. Set it long (up to 3650 days), or the skill silently stops working months later.
