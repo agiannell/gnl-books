@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type RawBuilder } from 'kysely';
 import { withTransaction, type Db } from './db';
 import { DEFAULT_TIMEZONE } from './families';
+import { isUuid } from './ids';
 
 export const SHELVES = ['to-read', 'currently-reading', 'read'] as const;
 /** Goodreads' own `Exclusive Shelf` values, so the CSV export is a pass-through. */
@@ -42,10 +43,6 @@ export interface ShelfEntry {
   tags: string[];
   book: StoredBook;
 }
-
-// A client-supplied id. Postgres raises on text that is not a uuid, which would
-// read as a server error rather than "no such profile".
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** One query shape for every read, so an entry always comes back with its book. */
 function entries(db: Db) {
@@ -143,7 +140,7 @@ export async function addToShelf(
   bookId: string,
   shelf: Shelf,
 ): Promise<ShelfEntry | undefined> {
-  if (!UUID.test(profileId) || !UUID.test(bookId)) return undefined;
+  if (!isUuid(profileId) || !isUuid(bookId)) return undefined;
   return withTransaction(db, async (trx) => {
     const profile = await trx
       .selectFrom('profiles as p')
@@ -232,7 +229,7 @@ async function editEntry(
   entryId: string,
   edit: (trx: Db, state: EntryState) => Promise<EntryChanges>,
 ): Promise<ShelfEntry | undefined> {
-  if (!UUID.test(entryId)) return undefined;
+  if (!isUuid(entryId)) return undefined;
   return withTransaction(db, async (trx) => {
     const owned = await trx
       .selectFrom('shelf_entries as e')
@@ -350,7 +347,7 @@ export async function logProgress(db: Db, familyId: string, entryId: string, inp
 
 /** A profile's entries, newest first, optionally one shelf. Empty for a profile outside this family. */
 export async function listShelf(db: Db, familyId: string, profileId: string, shelf?: Shelf): Promise<ShelfEntry[]> {
-  if (!UUID.test(profileId)) return [];
+  if (!isUuid(profileId)) return [];
   let query = entries(db).where('e.profile_id', '=', profileId).where('p.family_id', '=', familyId);
   if (shelf) query = query.where('e.shelf', '=', shelf);
   const rows = await query.orderBy('e.updated_at', 'desc').orderBy('e.id').execute();

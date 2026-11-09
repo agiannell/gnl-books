@@ -6,6 +6,7 @@ import {
   cacheHardcoverBook,
   createProfile,
   getFamily,
+  getGoal,
   getProfile,
   listProfiles,
   addToShelf,
@@ -13,10 +14,14 @@ import {
   finishEntry,
   listShelf,
   logProgress,
+  MAX_GOAL_TARGET,
   MAX_PAGE,
+  MIN_GOAL_YEAR,
+  MAX_GOAL_YEAR,
   ProgressRejectedError,
   rateEntry,
   reviewEntry,
+  setGoal,
   PIN_PATTERN,
   TooManyProfilesError,
   type BookSearchResult,
@@ -24,6 +29,7 @@ import {
   type Family,
   type Profile,
   type ProgressSource,
+  type ReadingGoal,
   type Shelf,
   type ShelfEntry,
   type StoredBook,
@@ -88,6 +94,17 @@ const ProgressSourceEnum = builder.enumType('ProgressSource', {
   } satisfies Record<string, { value: ProgressSource }>,
 });
 
+const ReadingGoalRef = builder.objectRef<ReadingGoal>('ReadingGoal');
+ReadingGoalRef.implement({
+  fields: (t) => ({
+    profileId: t.exposeID('profileId'),
+    year: t.exposeInt('year'),
+    target: t.exposeInt('target'),
+    // Books finished that year, for the goal ring.
+    booksRead: t.exposeInt('booksRead'),
+  }),
+});
+
 const ProfileRef = builder.objectRef<Profile>('Profile');
 ProfileRef.implement({
   fields: (t) => ({
@@ -96,6 +113,17 @@ ProfileRef.implement({
     emoji: t.string({ nullable: true, resolve: (profile) => profile.emoji }),
     color: t.string({ nullable: true, resolve: (profile) => profile.color }),
     isParent: t.exposeBoolean('isParent'),
+    // The reading goal for a year (default: this year in the family's zone), or null if none is set.
+    goal: t.field({
+      type: ReadingGoalRef,
+      nullable: true,
+      authScopes: { inFamily: true },
+      args: { year: t.arg.int({ required: false }) },
+      resolve: async (profile, args, ctx) => {
+        if (args.year != null) requireGoalYear(args.year);
+        return (await getGoal(ctx.db, ctx.familyId!, profile.id, args.year ?? undefined)) ?? null;
+      },
+    }),
     // Scoped to the caller's family, so a profile object can never be used to read another family's shelf.
     shelf: t.field({
       type: [ShelfEntryRef],
@@ -252,6 +280,10 @@ function requireRating(rating: number): void {
 
 const MAX_REVIEW_CHARACTERS = 5000;
 
+function requireGoalYear(year: number): void {
+  if (year < MIN_GOAL_YEAR || year > MAX_GOAL_YEAR) throw badInput(`Year must be ${MIN_GOAL_YEAR} to ${MAX_GOAL_YEAR}`);
+}
+
 /** A real YYYY-MM-DD date: "2026-02-30" has the right shape and is not one. */
 function isCalendarDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -391,6 +423,20 @@ builder.mutationType({
         const review = args.review.trim();
         if (review.length > MAX_REVIEW_CHARACTERS) throw badInput(`Review must be at most ${MAX_REVIEW_CHARACTERS} characters`);
         return foundEntry(await reviewEntry(ctx.db, ctx.familyId!, String(args.shelfEntryId), review || null));
+      },
+    }),
+
+    // A target number of books for a year, replacing any earlier one.
+    setGoal: t.field({
+      type: ReadingGoalRef,
+      authScopes: { inFamily: true },
+      args: { profileId: t.arg.id(), year: t.arg.int(), target: t.arg.int() },
+      resolve: async (_root, args, ctx) => {
+        requireGoalYear(args.year);
+        if (args.target < 1 || args.target > MAX_GOAL_TARGET) throw badInput(`Target must be 1 to ${MAX_GOAL_TARGET}`);
+        const goal = await setGoal(ctx.db, ctx.familyId!, String(args.profileId), args.year, args.target);
+        if (!goal) throw new GraphQLError('Profile not found', { extensions: { code: 'NOT_FOUND' } });
+        return goal;
       },
     }),
 

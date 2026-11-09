@@ -16,6 +16,8 @@ const {
   reviewEntry,
   finishEntry,
   logProgress,
+  getGoal,
+  setGoal,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   bootstrapFamily: vi.fn(),
@@ -30,6 +32,8 @@ const {
   reviewEntry: vi.fn(),
   finishEntry: vi.fn(),
   logProgress: vi.fn(),
+  getGoal: vi.fn(),
+  setGoal: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -50,6 +54,8 @@ vi.mock('@gnl-books/core', async () => {
     reviewEntry,
     finishEntry,
     logProgress,
+    getGoal,
+    setGoal,
   };
 });
 import {
@@ -97,6 +103,8 @@ beforeEach(() => {
   reviewEntry.mockReset();
   finishEntry.mockReset();
   logProgress.mockReset();
+  getGoal.mockReset();
+  setGoal.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -725,6 +733,85 @@ describe('rating, reviewing and finishing', () => {
       logProgress.mockClear();
       expect(code(await run(log('pagesRead: 5, source: WEB')))).toBe('FORBIDDEN');
       expect(logProgress).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('reading goals', () => {
+  const family = { familyId: 'family-1' };
+  const goal = { profileId: 'p-1', year: 2026, target: 30, booksRead: 7 };
+  const code = (r: { errors?: readonly { extensions?: Record<string, unknown> }[] }) => r.errors?.[0]?.extensions?.code;
+  const set = (year: number, target: number) =>
+    `mutation { setGoal(profileId: "p-1", year: ${year}, target: ${target}) { profileId year target booksRead } }`;
+
+  describe('setGoal', () => {
+    it('sets the goal for the profile, in the caller’s family, and returns the progress', async () => {
+      setGoal.mockResolvedValue(goal);
+      const result = await run(set(2026, 30), family);
+      expect(result.data).toEqual({ setGoal: goal });
+      expect(setGoal).toHaveBeenCalledWith(db, 'family-1', 'p-1', 2026, 30);
+    });
+
+    it.each([
+      [2026, 1],
+      [2026, 1000],
+      [2000, 5],
+      [2100, 5],
+    ])('accepts year %i with target %i', async (year, target) => {
+      setGoal.mockResolvedValue(goal);
+      expect((await run(set(year, target), family)).errors).toBeUndefined();
+    });
+
+    it.each([
+      ['a target of 0', 2026, 0],
+      ['a negative target', 2026, -1],
+      ['a target over 1000', 2026, 1001],
+      ['a year before 2000', 1999, 5],
+      ['a year after 2100', 2101, 5],
+      ['an absurd year', 2147483647, 5],
+    ])('refuses %s as BAD_USER_INPUT, without touching the database', async (_name, year, target) => {
+      expect(code(await run(set(year, target), family))).toBe('BAD_USER_INPUT');
+      expect(setGoal).not.toHaveBeenCalled();
+    });
+
+    it('is NOT_FOUND for a profile outside the family, and FORBIDDEN with no family', async () => {
+      setGoal.mockResolvedValue(undefined);
+      expect(code(await run(set(2026, 30), family))).toBe('NOT_FOUND');
+      setGoal.mockClear();
+      expect(code(await run(set(2026, 30)))).toBe('FORBIDDEN');
+      expect(setGoal).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Profile.goal', () => {
+    const q = (arg = '') => `{ profile(id: "p-1") { goal${arg} { year target booksRead } } }`;
+    const profile = { id: 'p-1', name: 'Sam', emoji: null, color: null, isParent: false };
+
+    it('reads the goal for the current year when no year is given', async () => {
+      getProfile.mockResolvedValue(profile);
+      getGoal.mockResolvedValue(goal);
+      const result = await run(q(), family);
+      expect(result.data).toEqual({ profile: { goal: { year: 2026, target: 30, booksRead: 7 } } });
+      expect(getGoal).toHaveBeenCalledWith(db, 'family-1', 'p-1', undefined);
+    });
+
+    it('reads the year asked for', async () => {
+      getProfile.mockResolvedValue(profile);
+      getGoal.mockResolvedValue(goal);
+      await run(q('(year: 2025)'), family);
+      expect(getGoal).toHaveBeenCalledWith(db, 'family-1', 'p-1', 2025);
+    });
+
+    it('is null when no goal is set', async () => {
+      getProfile.mockResolvedValue(profile);
+      getGoal.mockResolvedValue(undefined);
+      expect((await run(q(), family)).data).toEqual({ profile: { goal: null } });
+    });
+
+    it('refuses an out-of-range year, without touching the database', async () => {
+      getProfile.mockResolvedValue(profile);
+      expect(code(await run(q('(year: 2147483647)'), family))).toBe('BAD_USER_INPUT');
+      expect(getGoal).not.toHaveBeenCalled();
     });
   });
 });
