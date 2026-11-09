@@ -17,7 +17,7 @@ export {
   type PinState,
   type UnlockResult,
 } from './unlock';
-export { findFamilyIdForAccount, getFamily, type Family } from './families';
+export { DEFAULT_TIMEZONE, findFamilyIdForAccount, getFamily, type Family } from './families';
 export {
   createProfile,
   getProfile,

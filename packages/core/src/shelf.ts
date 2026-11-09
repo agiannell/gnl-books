@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { withTransaction, type Db } from './db';
+import { DEFAULT_TIMEZONE } from './families';
 
 export const SHELVES = ['to-read', 'currently-reading', 'read'] as const;
 /** Goodreads' own `Exclusive Shelf` values, so the CSV export is a pass-through. */
@@ -137,11 +138,14 @@ export async function addToShelf(
   if (!UUID.test(profileId) || !UUID.test(bookId)) return undefined;
   return withTransaction(db, async (trx) => {
     const profile = await trx
-      .selectFrom('profiles')
-      .select('id')
-      .where('id', '=', profileId)
-      .where('family_id', '=', familyId)
+      .selectFrom('profiles as p')
+      .innerJoin('families as f', 'f.id', 'p.family_id')
+      .select(['p.id', 'f.timezone'])
+      .where('p.id', '=', profileId)
+      .where('p.family_id', '=', familyId)
       .executeTakeFirst();
+    // The family's calendar day, not the database's (UTC).
+    const today = sql<string>`(now() at time zone ${profile?.timezone ?? DEFAULT_TIMEZONE})::date`;
     const book = await trx.selectFrom('books').select('id').where('id', '=', bookId).executeTakeFirst();
     if (!profile || !book) return undefined;
 
@@ -162,8 +166,9 @@ export async function addToShelf(
           profile_id: profileId,
           book_id: bookId,
           shelf,
-          date_started: shelf === 'currently-reading' ? sql<string>`current_date` : null,
-          date_read: shelf === 'read' ? sql<string>`current_date` : null,
+          date_started: shelf === 'currently-reading' ? today : null,
+          date_read: shelf === 'read' ? today : null,
+          date_added: today,
         })
         .execute();
     } else if (existing.shelf !== shelf) {
@@ -172,8 +177,8 @@ export async function addToShelf(
         .set({
           shelf,
           updated_at: sql`now()`,
-          ...(shelf === 'currently-reading' && { date_started: sql<string>`coalesce(date_started, current_date)` }),
-          ...(shelf === 'read' && { date_read: sql<string>`coalesce(date_read, current_date)` }),
+          ...(shelf === 'currently-reading' && { date_started: sql<string>`coalesce(date_started, ${today})` }),
+          ...(shelf === 'read' && { date_read: sql<string>`coalesce(date_read, ${today})` }),
         })
         .where('id', '=', existing.id)
         .execute();
