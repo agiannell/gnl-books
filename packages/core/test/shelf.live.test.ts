@@ -9,12 +9,14 @@ import { createProfile } from '../src/profiles';
 import {
   addToShelf,
   DateInFutureError,
+  EVENT_DELETE_BATCH,
   finishEntry,
   listShelf,
   logProgress,
   MAX_PAGE,
   ProgressRejectedError,
   rateEntry,
+  removeEntry,
   reviewEntry,
 } from '../src/shelf';
 
@@ -54,7 +56,12 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
     if (ids.length) {
       const profiles = db.selectFrom('profiles').select('id').where('family_id', 'in', ids);
       const entryIds = db.selectFrom('shelf_entries').select('id').where('profile_id', 'in', profiles);
-      await db.deleteFrom('progress_events').where('shelf_entry_id', 'in', entryIds).execute();
+      // In batches: a test that fails midway can leave thousands of events, past the 3,000-row transaction limit.
+      for (;;) {
+        const batch = await db.selectFrom('progress_events').select('id').where('shelf_entry_id', 'in', entryIds).limit(1000).execute();
+        if (batch.length === 0) break;
+        await db.deleteFrom('progress_events').where('id', 'in', batch.map((e) => e.id)).execute();
+      }
       await db.deleteFrom('shelf_entries').where('profile_id', 'in', profiles).execute();
       await db.deleteFrom('accounts').where('family_id', 'in', ids).execute();
       await db.deleteFrom('profiles').where('family_id', 'in', ids).execute();
@@ -269,6 +276,82 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
         review: null,
         dateRead: null,
       });
+    });
+  });
+
+  describe('removing an entry', () => {
+    const eventCount = async (entryId: string) =>
+      Number(
+        (await db.selectFrom('progress_events').select((eb) => eb.fn.countAll<string>().as('n')).where('shelf_entry_id', '=', entryId).executeTakeFirstOrThrow()).n,
+      );
+    // Bulk-inserts log rows directly, a chunk per statement.
+    const addEvents = async (entryId: string, count: number) => {
+      for (let done = 0; done < count; done += 1000) {
+        const rows = Array.from({ length: Math.min(1000, count - done) }, () => ({
+          id: randomUUID(),
+          shelf_entry_id: entryId,
+          page: 1,
+          pages_read: 1,
+          source: 'web' as const,
+        }));
+        await db.insertInto('progress_events').values(rows).execute();
+      }
+    };
+    const shelved = async () => {
+      const family = await newFamily();
+      const entry = await addToShelf(db, family.familyId, family.kidId, await newBook(), 'currently-reading');
+      return { ...family, entry: entry! };
+    };
+
+    it('removes the entry and its log, and leaves the book and everything else', async () => {
+      const s = await shelved();
+      const other = await addToShelf(db, s.familyId, s.kidId, await newBook('Other'), 'currently-reading');
+      await logProgress(db, s.familyId, s.entry.id, { pagesRead: 10, source: 'web' });
+      await logProgress(db, s.familyId, s.entry.id, { pagesRead: 10, source: 'web' });
+      await logProgress(db, s.familyId, other!.id, { pagesRead: 5, source: 'web' });
+
+      expect(await removeEntry(db, s.familyId, s.entry.id)).toBe(true);
+      expect((await listShelf(db, s.familyId, s.kidId)).map((e) => e.id)).toEqual([other!.id]);
+      expect(await eventCount(s.entry.id)).toBe(0);
+      expect(await eventCount(other!.id)).toBe(1);
+      expect(await db.selectFrom('books').select('id').where('id', '=', s.entry.book.id).executeTakeFirst()).toBeDefined();
+    });
+
+    // 3,200 is past DSQL's 3,000-row transaction limit, so one delete cannot do it.
+    it.each([0, EVENT_DELETE_BATCH, 3200])('removes an entry with %i log events', async (count) => {
+      const s = await shelved();
+      await addEvents(s.entry.id, count);
+      expect(await eventCount(s.entry.id)).toBe(count);
+      expect(await removeEntry(db, s.familyId, s.entry.id)).toBe(true);
+      expect(await eventCount(s.entry.id)).toBe(0);
+      expect(await listShelf(db, s.familyId, s.kidId)).toEqual([]);
+    }, 60_000);
+
+    it('can put the same book back afterwards, as a fresh entry', async () => {
+      const s = await shelved();
+      await removeEntry(db, s.familyId, s.entry.id);
+      const again = await addToShelf(db, s.familyId, s.kidId, s.entry.book.id, 'to-read');
+      expect(again).toMatchObject({ shelf: 'to-read', currentPage: null });
+      expect(again!.id).not.toBe(s.entry.id);
+    });
+
+    it('is false the second time, and nothing can be logged on a removed entry', async () => {
+      const s = await shelved();
+      expect(await removeEntry(db, s.familyId, s.entry.id)).toBe(true);
+      expect(await removeEntry(db, s.familyId, s.entry.id)).toBe(false);
+      expect(await logProgress(db, s.familyId, s.entry.id, { pagesRead: 5, source: 'web' })).toBeUndefined();
+      expect(await eventCount(s.entry.id)).toBe(0);
+    });
+
+    it('does not touch another family’s entry, or a malformed or unknown id', async () => {
+      const mine = await newFamily();
+      const theirs = await shelved();
+      await addEvents(theirs.entry.id, 3);
+      for (const id of [theirs.entry.id, randomUUID(), 'abc', '', "x'; --"]) {
+        expect(await removeEntry(db, mine.familyId, id)).toBe(false);
+      }
+      expect(await listShelf(db, theirs.familyId, theirs.kidId)).toHaveLength(1);
+      expect(await eventCount(theirs.entry.id)).toBe(3);
     });
   });
 

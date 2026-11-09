@@ -30,6 +30,7 @@ export {
 export {
   addToShelf,
   DateInFutureError,
+  EVENT_DELETE_BATCH,
   finishEntry,
   listShelf,
   localToday,
@@ -37,6 +38,7 @@ export {
   MAX_PAGE,
   ProgressRejectedError,
   rateEntry,
+  removeEntry,
   reviewEntry,
   SHELVES,
   type ProgressInput,

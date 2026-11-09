@@ -18,6 +18,8 @@ const {
   logProgress,
   getGoal,
   setGoal,
+  addManualBook,
+  removeEntry,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   bootstrapFamily: vi.fn(),
@@ -34,6 +36,8 @@ const {
   logProgress: vi.fn(),
   getGoal: vi.fn(),
   setGoal: vi.fn(),
+  addManualBook: vi.fn(),
+  removeEntry: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -56,6 +60,8 @@ vi.mock('@gnl-books/core', async () => {
     logProgress,
     getGoal,
     setGoal,
+    addManualBook,
+    removeEntry,
   };
 });
 import {
@@ -105,6 +111,8 @@ beforeEach(() => {
   logProgress.mockReset();
   getGoal.mockReset();
   setGoal.mockReset();
+  addManualBook.mockReset();
+  removeEntry.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -813,5 +821,120 @@ describe('reading goals', () => {
       expect(code(await run(q('(year: 2147483647)'), family))).toBe('BAD_USER_INPUT');
       expect(getGoal).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('addManualBook', () => {
+  const family = { familyId: 'family-1' };
+  const code = (r: { errors?: readonly { extensions?: Record<string, unknown> }[] }) => r.errors?.[0]?.extensions?.code;
+  const add = (fields: string) =>
+    `mutation { addManualBook(input: { ${fields} }) { id sourceId title authors subtitle pages releaseYear isbn13 isbn10 publisher description coverUrl } }`;
+  const base = 'title: "Homemade", authors: ["Me"]';
+
+  it('stores the book and returns it with our id and no catalog id, trimmed', async () => {
+    addManualBook.mockResolvedValue('book-uuid');
+    const result = await run(
+      add('title: "  Homemade  ", authors: [" Me ", "You"], subtitle: " A tale ", pages: 120, releaseYear: 2020, publisher: " Home Press "'),
+      family,
+    );
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({
+      addManualBook: {
+        id: 'book-uuid',
+        sourceId: null,
+        title: 'Homemade',
+        authors: ['Me', 'You'],
+        subtitle: 'A tale',
+        pages: 120,
+        releaseYear: 2020,
+        isbn13: null,
+        isbn10: null,
+        publisher: 'Home Press',
+        description: null,
+        coverUrl: null,
+      },
+    });
+    // Blank and missing fields are left out, not passed as undefined or empty.
+    expect(addManualBook).toHaveBeenCalledWith(db, {
+      title: 'Homemade',
+      authors: ['Me', 'You'],
+      subtitle: 'A tale',
+      pages: 120,
+      releaseYear: 2020,
+      publisher: 'Home Press',
+    });
+  });
+
+  it('treats blank optional fields as not given', async () => {
+    addManualBook.mockResolvedValue('book-uuid');
+    await run(add(`${base}, subtitle: "  ", publisher: "", description: " ", isbn13: " "`), family);
+    expect(addManualBook).toHaveBeenCalledWith(db, { title: 'Homemade', authors: ['Me'] });
+  });
+
+  it('normalises ISBNs: hyphens and spaces dropped, a trailing x upper-cased', async () => {
+    addManualBook.mockResolvedValue('book-uuid');
+    await run(add(`${base}, isbn13: "978-0-545-58160-8", isbn10: "0 8044 2957 x"`), family);
+    expect(addManualBook).toHaveBeenCalledWith(db, expect.objectContaining({ isbn13: '9780545581608', isbn10: '080442957X' }));
+  });
+
+  it.each([
+    ['a blank title', 'title: "  ", authors: ["Me"]'],
+    ['a title over 300 characters', `title: "${'x'.repeat(301)}", authors: ["Me"]`],
+    ['no authors', 'title: "T", authors: []'],
+    ['a blank author', 'title: "T", authors: [" "]'],
+    ['more than 10 authors', `title: "T", authors: [${Array(11).fill('"A"').join(',')}]`],
+    ['an author over 200 characters', `title: "T", authors: ["${'x'.repeat(201)}"]`],
+    ['a subtitle over 300 characters', `${base}, subtitle: "${'x'.repeat(301)}"`],
+    ['a publisher over 200 characters', `${base}, publisher: "${'x'.repeat(201)}"`],
+    ['a description over 5000 characters', `${base}, description: "${'x'.repeat(5001)}"`],
+    ['zero pages', `${base}, pages: 0`],
+    ['pages over the cap', `${base}, pages: 100001`],
+    ['a release year before 1000', `${base}, releaseYear: 999`],
+    ['a release year after 2100', `${base}, releaseYear: 2101`],
+    ['a short ISBN-13', `${base}, isbn13: "12345"`],
+    ['an ISBN-13 with letters', `${base}, isbn13: "97805455816XX"`],
+    ['an ISBN-10 with an X in the middle', `${base}, isbn10: "08X4429570"`],
+  ])('refuses %s as BAD_USER_INPUT, storing nothing', async (_name, fields) => {
+    expect(code(await run(add(fields), family))).toBe('BAD_USER_INPUT');
+    expect(addManualBook).not.toHaveBeenCalled();
+  });
+
+  it('accepts the limits themselves', async () => {
+    addManualBook.mockResolvedValue('book-uuid');
+    const fields = `title: "${'x'.repeat(300)}", authors: [${Array(10).fill('"A"').join(',')}], pages: 100000, releaseYear: 1000, description: "${'x'.repeat(5000)}"`;
+    expect((await run(add(fields), family)).errors).toBeUndefined();
+  });
+
+  it('is FORBIDDEN before there is a family, without touching the database', async () => {
+    expect(code(await run(add(base)))).toBe('FORBIDDEN');
+    expect(addManualBook).not.toHaveBeenCalled();
+  });
+});
+
+describe('removeFromShelf', () => {
+  const remove = 'mutation { removeFromShelf(shelfEntryId: "e-1") }';
+  const code = (r: { errors?: readonly { extensions?: Record<string, unknown> }[] }) => r.errors?.[0]?.extensions?.code;
+
+  it('removes the entry for an unlocked parent, in the caller’s family', async () => {
+    removeEntry.mockResolvedValue(true);
+    const result = await run(remove, { familyId: 'family-1', isParent: true });
+    expect(result.data).toEqual({ removeFromShelf: true });
+    expect(removeEntry).toHaveBeenCalledWith(db, 'family-1', 'e-1');
+  });
+
+  it('is FORBIDDEN for a signed-in family member who has not unlocked, without touching the database', async () => {
+    const result = await run(remove, { familyId: 'family-1', isParent: false });
+    expect(code(result)).toBe('FORBIDDEN');
+    expect(removeEntry).not.toHaveBeenCalled();
+  });
+
+  it('is FORBIDDEN before there is a family', async () => {
+    expect(code(await run(remove))).toBe('FORBIDDEN');
+    expect(removeEntry).not.toHaveBeenCalled();
+  });
+
+  it('is NOT_FOUND for an entry outside the family or already removed', async () => {
+    removeEntry.mockResolvedValue(false);
+    expect(code(await run(remove, { familyId: 'family-1', isParent: true }))).toBe('NOT_FOUND');
   });
 });
