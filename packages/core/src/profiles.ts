@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { withTransaction, type Db } from './db';
+import { isUuid } from './ids';
 
 export interface Profile {
   id: string;
@@ -26,10 +27,6 @@ export class TooManyProfilesError extends Error {
   }
 }
 
-// A profile id comes from a client. Postgres raises on text that is not a
-// uuid, which would read as a server error rather than "no such profile".
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 const columns = ['id', 'name', 'emoji', 'color', 'is_parent'] as const;
 const toProfile = (row: { id: string; name: string; emoji: string | null; color: string | null; is_parent: boolean }): Profile => ({
   id: row.id,
@@ -53,7 +50,7 @@ export async function listProfiles(db: Db, familyId: string): Promise<Profile[]>
 
 /** The profile, only if it belongs to this family. Someone else's profile is the same as none. */
 export async function getProfile(db: Db, familyId: string, profileId: string): Promise<Profile | undefined> {
-  if (!UUID.test(profileId)) return undefined;
+  if (!isUuid(profileId)) return undefined;
   const row = await db
     .selectFrom('profiles')
     .select(columns)
