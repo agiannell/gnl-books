@@ -345,6 +345,53 @@ export async function logProgress(db: Db, familyId: string, entryId: string, inp
   });
 }
 
+/** Progress events deleted per transaction; DSQL caps a transaction at 3,000 rows. */
+export const EVENT_DELETE_BATCH = 1000;
+
+/**
+ * Takes a book off a profile's shelf, with its progress log. The log is
+ * unbounded and has no cascade (see PLAN.md), so it goes in batches, each its
+ * own transaction, children first; the entry goes last, so an interrupted
+ * removal leaves the entry in place to be removed again. A concurrent
+ * `logProgress` updates the entry row this deletes, so one of the two retries
+ * and the loser finds it gone: no event is left behind for a missing entry.
+ *
+ * Returns false when the entry is not in this family (or does not exist).
+ */
+export async function removeEntry(db: Db, familyId: string, entryId: string): Promise<boolean> {
+  if (!isUuid(entryId)) return false;
+  const owned = await db
+    .selectFrom('shelf_entries as e')
+    .innerJoin('profiles as p', 'p.id', 'e.profile_id')
+    .select('e.id')
+    .where('e.id', '=', entryId)
+    .where('p.family_id', '=', familyId)
+    .executeTakeFirst();
+  if (!owned) return false;
+
+  for (;;) {
+    const deleted = await withTransaction(db, async (trx) => {
+      const batch = await trx
+        .selectFrom('progress_events')
+        .select('id')
+        .where('shelf_entry_id', '=', entryId)
+        .limit(EVENT_DELETE_BATCH)
+        .execute();
+      if (batch.length === 0) return 0;
+      await trx.deleteFrom('progress_events').where('id', 'in', batch.map((e) => e.id)).execute();
+      return batch.length;
+    });
+    if (deleted < EVENT_DELETE_BATCH) break;
+  }
+
+  return withTransaction(db, async (trx) => {
+    // Anything logged since the last batch (a handful at most).
+    await trx.deleteFrom('progress_events').where('shelf_entry_id', '=', entryId).execute();
+    const result = await trx.deleteFrom('shelf_entries').where('id', '=', entryId).executeTakeFirst();
+    return result.numDeletedRows > 0n;
+  });
+}
+
 /** A profile's entries, newest first, optionally one shelf. Empty for a profile outside this family. */
 export async function listShelf(db: Db, familyId: string, profileId: string, shelf?: Shelf): Promise<ShelfEntry[]> {
   if (!isUuid(profileId)) return [];

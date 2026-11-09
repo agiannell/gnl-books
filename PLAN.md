@@ -226,6 +226,8 @@ type Mutation {
   logProgress(shelfEntryId: ID!, page: Int, pagesRead: Int, source: ProgressSource!): ShelfEntry!   # exactly one of page / pagesRead
   finishBook(shelfEntryId: ID!, dateRead: String, rating: Int): ShelfEntry!   # YYYY-MM-DD, never after the family's today
   setGoal(profileId: ID!, year: Int!, target: Int!): ReadingGoal!
+  addManualBook(input: ManualBookInput!): Book!        # for a book the catalog can't find; shelve it by the returned id
+  removeFromShelf(shelfEntryId: ID!): Boolean!         # parent-only; deletes the entry and its progress log
   exportGoodreadsCsv(profileId: ID!): String!        # parent-only
   createProfile(input: CreateProfileInput!): Profile! # parent-only
   linkAlexaPerson(profileId: ID!, personId: String!): Profile!        # parent-only

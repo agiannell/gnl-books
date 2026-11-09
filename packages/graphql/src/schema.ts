@@ -1,4 +1,5 @@
 import {
+  addManualBook,
   AlreadyBootstrappedError,
   attemptParentUnlock,
   bootstrapFamily,
@@ -20,6 +21,7 @@ import {
   MAX_GOAL_YEAR,
   ProgressRejectedError,
   rateEntry,
+  removeEntry,
   reviewEntry,
   setGoal,
   PIN_PATTERN,
@@ -309,7 +311,61 @@ const CreateProfileInput = builder.inputType('CreateProfileInput', {
   }),
 });
 
-const ParentUnlockRef = builder.objectRef<{ token: string; expiresAt: Date }>('ParentUnlock');
+// A book the catalog could not find, entered by hand.
+const ManualBookInput = builder.inputType('ManualBookInput', {
+  fields: (t) => ({
+    title: t.string(),
+    authors: t.stringList(),
+    subtitle: t.string({ required: false }),
+    pages: t.int({ required: false }),
+    releaseYear: t.int({ required: false }),
+    isbn13: t.string({ required: false }),
+    isbn10: t.string({ required: false }),
+    publisher: t.string({ required: false }),
+    description: t.string({ required: false }),
+  }),
+});
+
+const MAX_AUTHORS = 10;
+const MAX_RELEASE_YEAR = 2100;
+const MAX_TEXT = 300;
+const MAX_DESCRIPTION = 5000;
+
+/** Trimmed text of 1 to `max` characters. */
+function requireText(value: string, label: string, max = MAX_TEXT): string {
+  const text = value.trim();
+  if (text.length < 1 || text.length > max) throw badInput(`${label} must be 1 to ${max} characters`);
+  return text;
+}
+
+/** The object without its undefined properties, which an optional field cannot hold under exactOptionalPropertyTypes. */
+function withoutUndefined<T extends object>(value: T): { [K in keyof T]: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as never;
+}
+
+/** Trimmed text within a length, or undefined when blank. */
+function optionalText(value: string | null | undefined, label: string, max = MAX_TEXT): string | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  if (text.length > max) throw badInput(`${label} must be at most ${max} characters`);
+  return text;
+}
+
+/** Digits only (hyphens and spaces are allowed on input), checked for shape, not for the check digit. */
+function optionalIsbn(value: string | null | undefined, label: string, shape: RegExp): string | undefined {
+  const text = value?.replace(/[-\s]/g, '').toUpperCase();
+  if (!text) return undefined;
+  if (!shape.test(text)) throw badInput(`${label} is not the right length or has invalid characters`);
+  return text;
+}
+
+function optionalInt(value: number | null | undefined, label: string, min: number, max: number): number | undefined {
+  if (value == null) return undefined;
+  if (value < min || value > max) throw badInput(`${label} must be ${min} to ${max}`);
+  return value;
+}
+
+const ParentUnlockRef =builder.objectRef<{ token: string; expiresAt: Date }>('ParentUnlock');
 ParentUnlockRef.implement({
   fields: (t) => ({
     // Send this back in the X-Parent-Token header on parent-only calls. It is
@@ -488,6 +544,63 @@ builder.mutationType({
           if (error instanceof DateInFutureError) throw badInput(error.message);
           throw error;
         }
+      },
+    }),
+
+    // For a book the catalog cannot find. It is kept like an imported one, so it
+    // can be shelved by the returned id; it has no catalog id. Nothing ties it
+    // to a family, so the only limit on how many a signed-in member can add is
+    // the field sizes below.
+    addManualBook: t.field({
+      type: BookRef,
+      authScopes: { inFamily: true },
+      args: { input: t.arg({ type: ManualBookInput }) },
+      resolve: async (_root, { input }, ctx) => {
+        const title = requireText(input.title, 'Title');
+        const authors = input.authors.map((a) => requireText(a, 'Author', 200));
+        if (authors.length < 1 || authors.length > MAX_AUTHORS) throw badInput(`Give 1 to ${MAX_AUTHORS} authors`);
+        const book = {
+          title,
+          authors,
+          subtitle: optionalText(input.subtitle, 'Subtitle'),
+          pages: optionalInt(input.pages, 'Pages', 1, MAX_PAGE),
+          releaseYear: optionalInt(input.releaseYear, 'Release year', 1000, MAX_RELEASE_YEAR),
+          isbn13: optionalIsbn(input.isbn13, 'ISBN-13', /^\d{13}$/),
+          isbn10: optionalIsbn(input.isbn10, 'ISBN-10', /^\d{9}[\dX]$/),
+          publisher: optionalText(input.publisher, 'Publisher', 200),
+          description: optionalText(input.description, 'Description', MAX_DESCRIPTION),
+        };
+        const id = await addManualBook(ctx.db, withoutUndefined(book));
+        return {
+          id,
+          sourceId: null,
+          title,
+          authors,
+          subtitle: book.subtitle ?? null,
+          pages: book.pages ?? null,
+          releaseYear: book.releaseYear ?? null,
+          isbn13: book.isbn13 ?? null,
+          isbn10: book.isbn10 ?? null,
+          publisher: book.publisher ?? null,
+          description: book.description ?? null,
+          coverUrl: null,
+          seriesName: null,
+          seriesPosition: null,
+          binding: null,
+        };
+      },
+    }),
+
+    // Takes a book off a profile's shelf, with its reading history. Parent-only
+    // (deleting is behind the PIN, see PLAN.md); the book itself stays in the library.
+    removeFromShelf: t.boolean({
+      authScopes: { isParent: true },
+      args: { shelfEntryId: t.arg.id() },
+      resolve: async (_root, args, ctx) => {
+        if (!(await removeEntry(ctx.db, ctx.familyId!, String(args.shelfEntryId)))) {
+          throw new GraphQLError('Shelf entry not found', { extensions: { code: 'NOT_FOUND' } });
+        }
+        return true;
       },
     }),
 
