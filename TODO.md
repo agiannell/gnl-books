@@ -118,10 +118,12 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 ## 7 — CSV export
 
-- [ ] `packages/core/csv.ts`, full Goodreads header in order
-- [ ] Both `Bookshelves` and `Exclusive Shelf` populated (works around the Goodreads import bug)
-- [ ] `YYYY/MM/DD` dates, `My Rating` `0` when unrated, plain ISBNs, `Author l-f`
-- [ ] `exportGoodreadsCsv` mutation, parent-PIN gated
+- [x] `packages/core/src/csv.ts`, full 24-column Goodreads header in order (`toGoodreadsCsv` is pure, `exportGoodreadsCsv` adds the family check)
+- [x] Both `Bookshelves` (shelf, then any custom tags) and `Exclusive Shelf` populated (works around the Goodreads import bug)
+- [x] `YYYY/MM/DD` dates, `My Rating` `0` when unrated, plain ISBNs, `Author l-f`; oldest added first; rows end in `\n`
+- [x] `exportGoodreadsCsv(profileId)` mutation, parent-PIN gated, `NOT_FOUND` outside the family. Unit tests with a small CSV reader, live tests against the cluster, mutation-checked
+- Left blank on purpose: `Book Id` (Goodreads assigns it), `Average Rating`, `Bookshelves with positions`, `Spoiler`, `Private Notes` (nothing writes it yet), `Original Publication Year` (`StoredBook` doesn't carry `original_pub_year`)
+- Known limits: `Author l-f` takes the last word as the surname (`Ursula K. Le Guin` becomes `Guin, Ursula K. Le`; Goodreads reads `Author`, so this is cosmetic). A title or review starting with `=`, `+`, `-` or `@` is written as is, so a spreadsheet would read it as a formula; escaping it would corrupt the data on import. Line breaks in reviews are real newlines inside quotes, where Goodreads' own export uses `<br/>`: unverified until the real import
 - [ ] **Acceptance test: import the real file into a throwaway Goodreads account.** This is the project's premise — do it here, not months later
 
 > **The app is worth using after step 7.** Everything below is additive.

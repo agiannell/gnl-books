@@ -1,3 +1,4 @@
+export { exportGoodreadsCsv, GOODREADS_HEADER, lastFirst, toGoodreadsCsv } from './csv';
 export { createDb, withTransaction, type Db, type DbConfig } from './db';
 export { addManualBook, cacheHardcoverBook } from './books/cache';
 export { createHardcoverSource, toBookSourceError, type HardcoverClientLike } from './books/hardcover';
