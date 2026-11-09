@@ -12,6 +12,9 @@ import {
   DateInFutureError,
   finishEntry,
   listShelf,
+  logProgress,
+  MAX_PAGE,
+  ProgressRejectedError,
   rateEntry,
   reviewEntry,
   PIN_PATTERN,
@@ -20,6 +23,7 @@ import {
   type BookSourceErrorCode,
   type Family,
   type Profile,
+  type ProgressSource,
   type Shelf,
   type ShelfEntry,
   type StoredBook,
@@ -74,6 +78,15 @@ const ShelfEnum = builder.enumType('Shelf', {
   } satisfies Record<string, { value: Shelf }>,
 });
 const ShelfEntryRef = builder.objectRef<ShelfEntry>('ShelfEntry');
+
+// Which client logged it, for the progress log.
+const ProgressSourceEnum = builder.enumType('ProgressSource', {
+  values: {
+    WEB: { value: 'web' },
+    ALEXA: { value: 'alexa' },
+    WIDGET: { value: 'widget' },
+  } satisfies Record<string, { value: ProgressSource }>,
+});
 
 const ProfileRef = builder.objectRef<Profile>('Profile');
 ProfileRef.implement({
@@ -378,6 +391,33 @@ builder.mutationType({
         const review = args.review.trim();
         if (review.length > MAX_REVIEW_CHARACTERS) throw badInput(`Review must be at most ${MAX_REVIEW_CHARACTERS} characters`);
         return foundEntry(await reviewEntry(ctx.db, ctx.familyId!, String(args.shelfEntryId), review || null));
+      },
+    }),
+
+    // "I'm on page 120" (`page`) or "I read 30 pages" (`pagesRead`): exactly one.
+    // Appends to the progress log and moves the book's current page; a to-read
+    // book becomes currently-reading, and a finished one is refused.
+    logProgress: t.field({
+      type: ShelfEntryRef,
+      authScopes: { inFamily: true },
+      args: {
+        shelfEntryId: t.arg.id(),
+        page: t.arg.int({ required: false }),
+        pagesRead: t.arg.int({ required: false }),
+        source: t.arg({ type: ProgressSourceEnum }),
+      },
+      resolve: async (_root, args, ctx) => {
+        const { page, pagesRead, source } = args;
+        if ((page == null) === (pagesRead == null)) throw badInput('Give either page or pagesRead, not both or neither');
+        if (page != null && (page < 0 || page > MAX_PAGE)) throw badInput(`Page must be 0 to ${MAX_PAGE}`);
+        if (pagesRead != null && (pagesRead < 1 || pagesRead > MAX_PAGE)) throw badInput(`Pages read must be 1 to ${MAX_PAGE}`);
+        const input = page != null ? { page, source } : { pagesRead: pagesRead!, source };
+        try {
+          return foundEntry(await logProgress(ctx.db, ctx.familyId!, String(args.shelfEntryId), input));
+        } catch (error) {
+          if (error instanceof ProgressRejectedError) throw badInput(error.message);
+          throw error;
+        }
       },
     }),
 

@@ -207,7 +207,18 @@ interface EntryChanges {
   shelf?: Shelf;
   rating?: number | null;
   review?: string | null;
+  current_page?: number | null;
+  date_started?: string | RawBuilder<string>;
   date_read?: string | RawBuilder<string>;
+}
+
+/** What an edit gets to see of the entry it is changing, read in the same transaction. */
+interface EntryState {
+  timezone: string | null;
+  shelf: Shelf;
+  currentPage: number | null;
+  /** The book's page count, when known. */
+  bookPages: number | null;
 }
 
 /**
@@ -219,7 +230,7 @@ async function editEntry(
   db: Db,
   familyId: string,
   entryId: string,
-  edit: (trx: Db, timezone: string | null) => Promise<EntryChanges>,
+  edit: (trx: Db, state: EntryState) => Promise<EntryChanges>,
 ): Promise<ShelfEntry | undefined> {
   if (!UUID.test(entryId)) return undefined;
   return withTransaction(db, async (trx) => {
@@ -227,13 +238,19 @@ async function editEntry(
       .selectFrom('shelf_entries as e')
       .innerJoin('profiles as p', 'p.id', 'e.profile_id')
       .innerJoin('families as f', 'f.id', 'p.family_id')
-      .select('f.timezone')
+      .innerJoin('books as b', 'b.id', 'e.book_id')
+      .select(['f.timezone', 'e.shelf', 'e.current_page', 'b.pages'])
       .where('e.id', '=', entryId)
       .where('p.family_id', '=', familyId)
       .executeTakeFirst();
     if (!owned) return undefined;
 
-    const changes = await edit(trx, owned.timezone);
+    const changes = await edit(trx, {
+      timezone: owned.timezone,
+      shelf: owned.shelf,
+      currentPage: owned.current_page,
+      bookPages: owned.pages,
+    });
     await trx
       .updateTable('shelf_entries')
       .set({ ...changes, updated_at: sql`now()` })
@@ -264,7 +281,7 @@ export const finishEntry = (
   entryId: string,
   options: { dateRead?: string | undefined; rating?: number | undefined } = {},
 ) =>
-  editEntry(db, familyId, entryId, async (trx, timezone) => {
+  editEntry(db, familyId, entryId, async (trx, { timezone }) => {
     const today = localToday(timezone);
     if (options.dateRead !== undefined) {
       const { rows } = await sql<{ later: boolean }>`select ${options.dateRead}::date > ${today} as later`.execute(trx);
@@ -276,6 +293,60 @@ export const finishEntry = (
       ...(options.rating !== undefined && { rating: options.rating }),
     };
   });
+
+/** The furthest page that can be logged, so a typo cannot overflow the integer column. */
+export const MAX_PAGE = 100_000;
+
+export type ProgressSource = 'web' | 'alexa' | 'widget';
+
+/** Where the reader says they are: on a page, or that they read some pages. Exactly one. */
+export type ProgressInput = ({ page: number } | { pagesRead: number }) & { source: ProgressSource };
+
+/** The entry's state makes this update impossible (a finished book, or past the last page). */
+export class ProgressRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProgressRejectedError';
+  }
+}
+
+/**
+ * Records reading progress: appends to the progress log and moves the entry's
+ * current page. Logging on a to-read book starts it (moves it to
+ * currently-reading, stamping the start date once). A finished book refuses:
+ * re-reading is not designed yet, and "I read 20 pages" about a finished book is
+ * more likely a mistake than a re-read.
+ *
+ * With `page`, the logged `pages_read` is how far that moved forward (zero when
+ * it moved back, a correction). With `pagesRead`, the new page is the current
+ * one plus that. The caller validates the numbers' ranges.
+ */
+export async function logProgress(db: Db, familyId: string, entryId: string, input: ProgressInput) {
+  // Made once, outside the transaction: a retried attempt must reuse the id.
+  const eventId = randomUUID();
+  return editEntry(db, familyId, entryId, async (trx, state) => {
+    if (state.shelf === 'read') throw new ProgressRejectedError('This book is already finished');
+    const before = state.currentPage ?? 0;
+    const page = 'page' in input ? input.page : before + input.pagesRead;
+    const limit = state.bookPages ?? MAX_PAGE;
+    if (page > Math.min(limit, MAX_PAGE)) {
+      throw new ProgressRejectedError(
+        state.bookPages === null ? 'That is past the last page this app can log' : `This book has ${state.bookPages} pages`,
+      );
+    }
+    const pagesRead = 'pagesRead' in input ? input.pagesRead : Math.max(0, page - before);
+
+    await trx
+      .insertInto('progress_events')
+      .values({ id: eventId, shelf_entry_id: entryId, page, pages_read: pagesRead, source: input.source })
+      .execute();
+    return {
+      current_page: page,
+      shelf: 'currently-reading',
+      date_started: sql<string>`coalesce(date_started, ${localToday(state.timezone)})`,
+    };
+  });
+}
 
 /** A profile's entries, newest first, optionally one shelf. Empty for a profile outside this family. */
 export async function listShelf(db: Db, familyId: string, profileId: string, shelf?: Shelf): Promise<ShelfEntry[]> {
