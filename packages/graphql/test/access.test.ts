@@ -71,6 +71,7 @@ describe('unauthenticated access', () => {
     ['a book import', { query: 'mutation { importBook(sourceId: "1") { id } }' }],
     ['a profile lookup', { query: '{ profile(id: "p-1") { name } }' }],
     ['a profile creation', { query: 'mutation { createProfile(input: { name: "A" }) { id } }' }],
+    ['shelving a book', { query: 'mutation { addToShelf(profileId: "p", bookId: "b", shelf: READ) { id } }' }],
   ])('refuses %s with a 401 and no data', async (_name, body) => {
     catalogCalls.mockClear();
     const res = await request({ body });

@@ -8,12 +8,17 @@ import {
   getFamily,
   getProfile,
   listProfiles,
+  addToShelf,
+  listShelf,
   PIN_PATTERN,
   TooManyProfilesError,
   type BookSearchResult,
   type BookSourceErrorCode,
   type Family,
   type Profile,
+  type Shelf,
+  type ShelfEntry,
+  type StoredBook,
 } from '@gnl-books/core';
 import SchemaBuilder from '@pothos/core';
 import ScopeAuthPlugin from '@pothos/plugin-scope-auth';
@@ -55,6 +60,17 @@ AccountRef.implement({
   }),
 });
 
+// Goodreads' shelf names contain hyphens, which a GraphQL enum name cannot, so
+// the names are spelled out and the stored values stay Goodreads' own.
+const ShelfEnum = builder.enumType('Shelf', {
+  values: {
+    TO_READ: { value: 'to-read' },
+    CURRENTLY_READING: { value: 'currently-reading' },
+    READ: { value: 'read' },
+  } satisfies Record<string, { value: Shelf }>,
+});
+const ShelfEntryRef = builder.objectRef<ShelfEntry>('ShelfEntry');
+
 const ProfileRef = builder.objectRef<Profile>('Profile');
 ProfileRef.implement({
   fields: (t) => ({
@@ -63,6 +79,13 @@ ProfileRef.implement({
     emoji: t.string({ nullable: true, resolve: (profile) => profile.emoji }),
     color: t.string({ nullable: true, resolve: (profile) => profile.color }),
     isParent: t.exposeBoolean('isParent'),
+    // Scoped to the caller's family, so a profile object can never be used to read another family's shelf.
+    shelf: t.field({
+      type: [ShelfEntryRef],
+      authScopes: { inFamily: true },
+      args: { shelf: t.arg({ type: ShelfEnum, required: false }) },
+      resolve: (profile, args, ctx) => listShelf(ctx.db, ctx.familyId!, profile.id, args.shelf ?? undefined),
+    }),
   }),
 });
 
@@ -82,12 +105,13 @@ FamilyRef.implement({
 
 // A search hit or an imported book. `id` is ours and is null until the book has
 // been imported into the library; `sourceId` is the catalog's own.
-type BookShape = BookSearchResult & { id: string | null };
+type BookShape = (BookSearchResult & { id: string | null }) | StoredBook;
 const BookRef = builder.objectRef<BookShape>('Book');
 BookRef.implement({
   fields: (t) => ({
     id: t.id({ nullable: true, resolve: (book) => book.id }),
-    sourceId: t.exposeString('sourceId'),
+    // Null for a book entered by hand, which has no catalog id.
+    sourceId: t.string({ nullable: true, resolve: (book) => book.sourceId ?? null }),
     title: t.exposeString('title'),
     subtitle: t.string({ nullable: true, resolve: (book) => book.subtitle ?? null }),
     authors: t.stringList({ resolve: (book) => book.authors }),
@@ -101,6 +125,25 @@ BookRef.implement({
     description: t.string({ nullable: true, resolve: (book) => book.description ?? null }),
     publisher: t.string({ nullable: true, resolve: (book) => book.publisher ?? null }),
     binding: t.string({ nullable: true, resolve: (book) => book.binding ?? null }),
+  }),
+});
+
+ShelfEntryRef.implement({
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    profileId: t.exposeID('profileId'),
+    shelf: t.field({ type: ShelfEnum, resolve: (entry) => entry.shelf }),
+    book: t.field({ type: BookRef, resolve: (entry) => entry.book }),
+    rating: t.int({ nullable: true, resolve: (entry) => entry.rating }),
+    review: t.string({ nullable: true, resolve: (entry) => entry.review }),
+    // Calendar dates as YYYY-MM-DD strings.
+    dateAdded: t.exposeString('dateAdded'),
+    dateStarted: t.string({ nullable: true, resolve: (entry) => entry.dateStarted }),
+    dateRead: t.string({ nullable: true, resolve: (entry) => entry.dateRead }),
+    readCount: t.exposeInt('readCount'),
+    currentPage: t.int({ nullable: true, resolve: (entry) => entry.currentPage }),
+    owned: t.exposeBoolean('owned'),
+    tags: t.stringList({ resolve: (entry) => entry.tags }),
   }),
 });
 
@@ -271,6 +314,20 @@ builder.mutationType({
           }
           throw error;
         }
+      },
+    }),
+
+    // Any signed-in family member may shelve for any profile (see PLAN.md: the
+    // API cannot tell whose session it is). Both ids come from the client, so
+    // the profile is checked against the caller's family and the book must exist.
+    addToShelf: t.field({
+      type: ShelfEntryRef,
+      authScopes: { inFamily: true },
+      args: { profileId: t.arg.id(), bookId: t.arg.id(), shelf: t.arg({ type: ShelfEnum }) },
+      resolve: async (_root, args, ctx) => {
+        const entry = await addToShelf(ctx.db, ctx.familyId!, String(args.profileId), String(args.bookId), args.shelf);
+        if (!entry) throw new GraphQLError('Profile or book not found', { extensions: { code: 'NOT_FOUND' } });
+        return entry;
       },
     }),
 

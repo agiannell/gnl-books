@@ -98,7 +98,8 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 - [x] **Decided: any signed-in family member can edit any profile's shelf** (the API cannot tell whose session it is); the parent PIN gates profile management, deleting, and CSV export only. See `PLAN.md`
 - [x] Profiles: `family.profiles`, `profile(id)`, `createProfile(input)` (parent-only; name, emoji, `#rrggbb` color, optional `isParent` for a second adult; 20-profile cap as `LIMIT_REACHED`), all scoped by the caller's family from the context. `profile(id)` is null for a malformed or another family's id. **Written and live-tested on the cluster, not deployed.** The cap can overshoot by a profile or two under simultaneous adds (DSQL only detects write conflicts); fine for a guard
-- [ ] Shelf entries: `addToShelf(profileId, bookId, shelf)`, then rate, review, finish, progress log, goals
+- [x] `addToShelf(profileId, bookId, shelf)` and `Profile.shelf(shelf?)`: take our book id (from `importBook`), check the profile against the caller's family and that the book exists (`NOT_FOUND` otherwise); a book already shelved moves instead of duplicating; the first move to currently-reading / read stamps `date_started` / `date_read` and never overwrites a date. `Shelf` is an enum (`TO_READ`, `CURRENTLY_READING`, `READ`) since GraphQL names can't hold hyphens. `Book.sourceId` is now nullable (hand-entered books). **Written and live-tested, not deployed.** `Profile.shelf` is unpaginated (family scale)
+- [ ] Rest of the shelf API: rate, review, finish, progress log, goals; manual-add mutation (`addManualBook` exists in core); `book(id)` lookup
 
 ## 6 — Shelves in the SPA
 
