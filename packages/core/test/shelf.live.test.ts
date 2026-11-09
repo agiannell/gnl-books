@@ -6,7 +6,17 @@ import { addManualBook } from '../src/books/cache';
 import { createDb, type Db } from '../src/db';
 import { DEFAULT_TIMEZONE } from '../src/families';
 import { createProfile } from '../src/profiles';
-import { addToShelf, DateInFutureError, finishEntry, listShelf, rateEntry, reviewEntry } from '../src/shelf';
+import {
+  addToShelf,
+  DateInFutureError,
+  finishEntry,
+  listShelf,
+  logProgress,
+  MAX_PAGE,
+  ProgressRejectedError,
+  rateEntry,
+  reviewEntry,
+} from '../src/shelf';
 
 // Runs against the real cluster; skipped unless DSQL_ENDPOINT is set. Every row
 // it makes is removed afterwards.
@@ -36,18 +46,26 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
   });
 
   afterAll(async () => {
-    // Children first: the foreign keys are NO ACTION, not CASCADE.
-    for (const { familyId, sub } of families) {
-      const profiles = db.selectFrom('profiles').select('id').where('family_id', '=', familyId);
+    // Children first: the foreign keys are NO ACTION, not CASCADE. One statement
+    // per table for all the test families (each statement is a slow round trip,
+    // and there are dozens of families); a few dozen rows is far under the
+    // 3,000-row transaction limit.
+    const ids = families.map((f) => f.familyId);
+    if (ids.length) {
+      const profiles = db.selectFrom('profiles').select('id').where('family_id', 'in', ids);
+      const entryIds = db.selectFrom('shelf_entries').select('id').where('profile_id', 'in', profiles);
+      await db.deleteFrom('progress_events').where('shelf_entry_id', 'in', entryIds).execute();
       await db.deleteFrom('shelf_entries').where('profile_id', 'in', profiles).execute();
-      await db.deleteFrom('accounts').where('cognito_sub', '=', sub).execute();
-      await db.deleteFrom('profiles').where('family_id', '=', familyId).execute();
-      await db.deleteFrom('families').where('id', '=', familyId).execute();
+      await db.deleteFrom('accounts').where('family_id', 'in', ids).execute();
+      await db.deleteFrom('profiles').where('family_id', 'in', ids).execute();
+      await db.deleteFrom('families').where('id', 'in', ids).execute();
     }
     if (bookIds.length) await db.deleteFrom('books').where('id', 'in', bookIds).execute();
     await db.destroy();
-    // Each family takes four statements to remove, and there are dozens.
   }, 120_000);
+
+  const setZone = (familyId: string, zone: string) =>
+    db.updateTable('families').set({ timezone: zone }).where('id', '=', familyId).execute();
 
   // The calendar date right now in a zone, computed by the database.
   const today = async (zone = DEFAULT_TIMEZONE) =>
@@ -175,9 +193,6 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
       const entry = await addToShelf(db, family.familyId, family.kidId, await newBook(), shelf);
       return { ...family, entry: entry! };
     };
-    const setZone = (familyId: string, zone: string) =>
-      db.updateTable('families').set({ timezone: zone }).where('id', '=', familyId).execute();
-
     it('rates, re-rates and clears', async () => {
       const { familyId, entry } = await shelved();
       expect((await rateEntry(db, familyId, entry.id, 4))!.rating).toBe(4);
@@ -254,6 +269,96 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
         review: null,
         dateRead: null,
       });
+    });
+  });
+
+  describe('logging progress', () => {
+    const start = async (shelf: 'to-read' | 'currently-reading' | 'read' = 'currently-reading') => {
+      const family = await newFamily();
+      const bookId = await newBook(); // 120 pages
+      const entry = await addToShelf(db, family.familyId, family.kidId, bookId, shelf);
+      return { ...family, bookId, entry: entry! };
+    };
+    const events = (entryId: string) =>
+      db.selectFrom('progress_events').select(['page', 'pages_read', 'source']).where('shelf_entry_id', '=', entryId).orderBy('at').execute();
+    const current = async (f: { familyId: string; kidId: string }) => (await listShelf(db, f.familyId, f.kidId))[0]!;
+
+    it('adds pages read to the current page and logs each one', async () => {
+      const s = await start();
+      expect((await logProgress(db, s.familyId, s.entry.id, { pagesRead: 20, source: 'alexa' }))!.currentPage).toBe(20);
+      expect((await logProgress(db, s.familyId, s.entry.id, { pagesRead: 30, source: 'web' }))!.currentPage).toBe(50);
+      expect(await events(s.entry.id)).toEqual([
+        { page: 20, pages_read: 20, source: 'alexa' },
+        { page: 50, pages_read: 30, source: 'web' },
+      ]);
+    });
+
+    it('takes a page, logs how far it moved, and logs zero for a correction backwards', async () => {
+      const s = await start();
+      await logProgress(db, s.familyId, s.entry.id, { page: 40, source: 'web' });
+      await logProgress(db, s.familyId, s.entry.id, { page: 100, source: 'web' });
+      const back = await logProgress(db, s.familyId, s.entry.id, { page: 80, source: 'web' });
+      expect(back!.currentPage).toBe(80);
+      expect((await events(s.entry.id)).map((e) => [e.page, e.pages_read])).toEqual([[40, 40], [100, 60], [80, 0]]);
+    });
+
+    it('starts a to-read book, stamping the start date in the family zone', async () => {
+      const s = await start('to-read');
+      await setZone(s.familyId, 'Pacific/Kiritimati');
+      const entry = await logProgress(db, s.familyId, s.entry.id, { pagesRead: 5, source: 'widget' });
+      expect(entry).toMatchObject({ shelf: 'currently-reading', currentPage: 5, dateStarted: await today('Pacific/Kiritimati') });
+    });
+
+    it('keeps a start date that is already set', async () => {
+      const s = await start();
+      await db.updateTable('shelf_entries').set({ date_started: '2025-01-02' }).where('id', '=', s.entry.id).execute();
+      expect((await logProgress(db, s.familyId, s.entry.id, { pagesRead: 5, source: 'web' }))!.dateStarted).toBe('2025-01-02');
+    });
+
+    it('refuses to go past the last page, logging and changing nothing', async () => {
+      const s = await start();
+      await logProgress(db, s.familyId, s.entry.id, { page: 100, source: 'web' });
+      await expect(logProgress(db, s.familyId, s.entry.id, { page: 121, source: 'web' })).rejects.toThrow(ProgressRejectedError);
+      await expect(logProgress(db, s.familyId, s.entry.id, { pagesRead: 21, source: 'web' })).rejects.toThrow(/120 pages/);
+      expect((await current(s)).currentPage).toBe(100);
+      expect(await events(s.entry.id)).toHaveLength(1);
+      expect((await logProgress(db, s.familyId, s.entry.id, { page: 120, source: 'web' }))!.currentPage).toBe(120);
+    });
+
+    it('caps a book with no page count at MAX_PAGE', async () => {
+      const s = await start();
+      await db.updateTable('books').set({ pages: null }).where('id', '=', s.bookId).execute();
+      await expect(logProgress(db, s.familyId, s.entry.id, { page: MAX_PAGE + 1, source: 'web' })).rejects.toThrow(
+        ProgressRejectedError,
+      );
+      expect((await logProgress(db, s.familyId, s.entry.id, { page: MAX_PAGE, source: 'web' }))!.currentPage).toBe(MAX_PAGE);
+    });
+
+    it('refuses a finished book, logging and changing nothing', async () => {
+      const s = await start('read');
+      await expect(logProgress(db, s.familyId, s.entry.id, { pagesRead: 10, source: 'web' })).rejects.toThrow(/already finished/);
+      expect(await events(s.entry.id)).toEqual([]);
+      expect(await current(s)).toMatchObject({ shelf: 'read', currentPage: null });
+    });
+
+    it('counts two simultaneous logs both, as a conflict retried', async () => {
+      const s = await start();
+      await Promise.all([
+        logProgress(db, s.familyId, s.entry.id, { pagesRead: 10, source: 'web' }),
+        logProgress(db, s.familyId, s.entry.id, { pagesRead: 10, source: 'alexa' }),
+      ]);
+      expect((await current(s)).currentPage).toBe(20);
+      expect(await events(s.entry.id)).toHaveLength(2);
+    });
+
+    it('treats another family’s entry and a bad id as missing, logging nothing', async () => {
+      const mine = await newFamily();
+      const theirs = await start();
+      for (const id of [theirs.entry.id, randomUUID(), 'abc', '']) {
+        expect(await logProgress(db, mine.familyId, id, { pagesRead: 5, source: 'web' })).toBeUndefined();
+      }
+      expect(await events(theirs.entry.id)).toEqual([]);
+      expect((await current(theirs)).currentPage).toBeNull();
     });
   });
 

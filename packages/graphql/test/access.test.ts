@@ -73,6 +73,7 @@ describe('unauthenticated access', () => {
     ['a profile creation', { query: 'mutation { createProfile(input: { name: "A" }) { id } }' }],
     ['rating a book', { query: 'mutation { rateBook(shelfEntryId: "e", rating: 5) { id } }' }],
     ['reviewing a book', { query: 'mutation { reviewBook(shelfEntryId: "e", review: "x") { id } }' }],
+    ['logging progress', { query: 'mutation { logProgress(shelfEntryId: "e", pagesRead: 5, source: WEB) { id } }' }],
     ['finishing a book', { query: 'mutation { finishBook(shelfEntryId: "e") { id } }' }],
     ['shelving a book', { query: 'mutation { addToShelf(profileId: "p", bookId: "b", shelf: READ) { id } }' }],
   ])('refuses %s with a 401 and no data', async (_name, body) => {

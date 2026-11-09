@@ -15,6 +15,7 @@ const {
   rateEntry,
   reviewEntry,
   finishEntry,
+  logProgress,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   bootstrapFamily: vi.fn(),
@@ -28,6 +29,7 @@ const {
   rateEntry: vi.fn(),
   reviewEntry: vi.fn(),
   finishEntry: vi.fn(),
+  logProgress: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -47,9 +49,16 @@ vi.mock('@gnl-books/core', async () => {
     rateEntry,
     reviewEntry,
     finishEntry,
+    logProgress,
   };
 });
-import { AlreadyBootstrappedError, BookSourceError, DateInFutureError, TooManyProfilesError } from '@gnl-books/core';
+import {
+  AlreadyBootstrappedError,
+  BookSourceError,
+  DateInFutureError,
+  ProgressRejectedError,
+  TooManyProfilesError,
+} from '@gnl-books/core';
 
 import type { Context } from '../src/context';
 import { schema } from '../src/schema';
@@ -87,6 +96,7 @@ beforeEach(() => {
   rateEntry.mockReset();
   reviewEntry.mockReset();
   finishEntry.mockReset();
+  logProgress.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -652,6 +662,69 @@ describe('rating, reviewing and finishing', () => {
       finishEntry.mockClear();
       expect(code(await run(finish()))).toBe('FORBIDDEN');
       expect(finishEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logProgress', () => {
+    const log = (args: string) => `mutation { logProgress(shelfEntryId: "e-1", ${args}) { shelf currentPage } }`;
+    const moved = { ...entry, shelf: 'currently-reading', currentPage: 50 };
+
+    it('logs pages read, with the source as the stored value', async () => {
+      logProgress.mockResolvedValue(moved);
+      const result = await run(log('pagesRead: 30, source: ALEXA'), family);
+      expect(result.data).toEqual({ logProgress: { shelf: 'CURRENTLY_READING', currentPage: 50 } });
+      expect(logProgress).toHaveBeenCalledWith(db, 'family-1', 'e-1', { pagesRead: 30, source: 'alexa' });
+    });
+
+    it('logs a page', async () => {
+      logProgress.mockResolvedValue(moved);
+      await run(log('page: 120, source: WEB'), family);
+      expect(logProgress).toHaveBeenCalledWith(db, 'family-1', 'e-1', { page: 120, source: 'web' });
+    });
+
+    it('accepts page 0, a reset', async () => {
+      logProgress.mockResolvedValue(moved);
+      expect((await run(log('page: 0, source: WIDGET'), family)).errors).toBeUndefined();
+      expect(logProgress).toHaveBeenCalledWith(db, 'family-1', 'e-1', { page: 0, source: 'widget' });
+    });
+
+    it.each([
+      ['neither', 'source: WEB'],
+      ['both', 'page: 10, pagesRead: 5, source: WEB'],
+      ['a negative page', 'page: -1, source: WEB'],
+      ['a page beyond the cap', 'page: 100001, source: WEB'],
+      ['zero pages read', 'pagesRead: 0, source: WEB'],
+      ['negative pages read', 'pagesRead: -5, source: WEB'],
+      ['pages read beyond the cap', 'pagesRead: 100001, source: WEB'],
+    ])('refuses %s as BAD_USER_INPUT, without touching the database', async (_name, args) => {
+      expect(code(await run(log(args), family))).toBe('BAD_USER_INPUT');
+      expect(logProgress).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unknown source at validation', async () => {
+      expect((await run(log('pagesRead: 5, source: CARRIER_PIGEON'), family)).errors).toBeDefined();
+      expect(logProgress).not.toHaveBeenCalled();
+    });
+
+    it('reports a finished book or a page past the end as BAD_USER_INPUT, with the reason', async () => {
+      logProgress.mockRejectedValue(new ProgressRejectedError('This book has 120 pages'));
+      const result = await run(log('page: 500, source: WEB'), family);
+      expect(code(result)).toBe('BAD_USER_INPUT');
+      expect(result.errors?.[0]?.message).toBe('This book has 120 pages');
+    });
+
+    it('does not dress an unexpected failure up as a user error', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      logProgress.mockRejectedValue(new Error('connection reset'));
+      expect(code(await run(log('pagesRead: 5, source: WEB'), family))).not.toBe('BAD_USER_INPUT');
+    });
+
+    it('is NOT_FOUND for an entry outside the family, and FORBIDDEN with no family', async () => {
+      logProgress.mockResolvedValue(undefined);
+      expect(code(await run(log('pagesRead: 5, source: WEB'), family))).toBe('NOT_FOUND');
+      logProgress.mockClear();
+      expect(code(await run(log('pagesRead: 5, source: WEB')))).toBe('FORBIDDEN');
+      expect(logProgress).not.toHaveBeenCalled();
     });
   });
 });
