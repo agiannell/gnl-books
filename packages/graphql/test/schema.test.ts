@@ -2,21 +2,43 @@ import { graphql } from 'graphql';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@gnl-books/core';
 
-const { getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook, listProfiles, getProfile, createProfile } =
-  vi.hoisted(() => ({
-    getFamily: vi.fn(),
-    bootstrapFamily: vi.fn(),
-    attemptParentUnlock: vi.fn(),
-    cacheHardcoverBook: vi.fn(),
-    listProfiles: vi.fn(),
-    getProfile: vi.fn(),
-    createProfile: vi.fn(),
-  }));
+const {
+  getFamily,
+  bootstrapFamily,
+  attemptParentUnlock,
+  cacheHardcoverBook,
+  listProfiles,
+  getProfile,
+  createProfile,
+  addToShelf,
+  listShelf,
+} = vi.hoisted(() => ({
+  getFamily: vi.fn(),
+  bootstrapFamily: vi.fn(),
+  attemptParentUnlock: vi.fn(),
+  cacheHardcoverBook: vi.fn(),
+  listProfiles: vi.fn(),
+  getProfile: vi.fn(),
+  createProfile: vi.fn(),
+  addToShelf: vi.fn(),
+  listShelf: vi.fn(),
+}));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
 vi.mock('@gnl-books/core', async () => {
   const actual = await vi.importActual<typeof import('@gnl-books/core')>('@gnl-books/core');
-  return { ...actual, getFamily, bootstrapFamily, attemptParentUnlock, cacheHardcoverBook, listProfiles, getProfile, createProfile };
+  return {
+    ...actual,
+    getFamily,
+    bootstrapFamily,
+    attemptParentUnlock,
+    cacheHardcoverBook,
+    listProfiles,
+    getProfile,
+    createProfile,
+    addToShelf,
+    listShelf,
+  };
 });
 import { AlreadyBootstrappedError, BookSourceError, TooManyProfilesError } from '@gnl-books/core';
 
@@ -51,6 +73,8 @@ beforeEach(() => {
   listProfiles.mockReset();
   getProfile.mockReset();
   createProfile.mockReset();
+  addToShelf.mockReset();
+  listShelf.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -404,5 +428,83 @@ describe('importBook', () => {
     expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
     expect(books.getById).not.toHaveBeenCalled();
     expect(cacheHardcoverBook).not.toHaveBeenCalled();
+  });
+});
+
+describe('addToShelf', () => {
+  const add = (shelf = 'CURRENTLY_READING') =>
+    `mutation { addToShelf(profileId: "p-1", bookId: "b-1", shelf: ${shelf}) {
+      id profileId shelf dateStarted tags book { id title sourceId seriesPosition } } }`;
+  const entry = {
+    id: 'e-1',
+    profileId: 'p-1',
+    shelf: 'currently-reading',
+    rating: null,
+    review: null,
+    dateAdded: '2026-11-08',
+    dateStarted: '2026-11-08',
+    dateRead: null,
+    readCount: 1,
+    currentPage: null,
+    owned: false,
+    tags: [],
+    book: { id: 'b-1', sourceId: null, title: 'My Book', authors: ['A'], seriesPosition: 2.5 },
+  };
+
+  it('shelves for the profile and book named, in the caller’s family, using the stored shelf value', async () => {
+    addToShelf.mockResolvedValue(entry);
+    const result = await run(add(), { familyId: 'family-1' });
+    expect(result.errors).toBeUndefined();
+    expect(addToShelf).toHaveBeenCalledWith(db, 'family-1', 'p-1', 'b-1', 'currently-reading');
+    expect(result.data).toEqual({
+      addToShelf: {
+        id: 'e-1',
+        profileId: 'p-1',
+        shelf: 'CURRENTLY_READING',
+        dateStarted: '2026-11-08',
+        tags: [],
+        // A hand-entered book has no catalog id.
+        book: { id: 'b-1', title: 'My Book', sourceId: null, seriesPosition: 2.5 },
+      },
+    });
+  });
+
+  it('is NOT_FOUND for a profile outside the family or a missing book', async () => {
+    addToShelf.mockResolvedValue(undefined);
+    const result = await run(add('READ'), { familyId: 'family-1' });
+    expect(result.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
+  });
+
+  it('refuses a shelf that is not one of the three', async () => {
+    const result = await run(add('FAVORITES'), { familyId: 'family-1' });
+    expect(result.errors).toBeDefined();
+    expect(addToShelf).not.toHaveBeenCalled();
+  });
+
+  it('is FORBIDDEN before there is a family, without touching the database', async () => {
+    const result = await run(add());
+    expect(result.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(addToShelf).not.toHaveBeenCalled();
+  });
+
+  it('needs no parent unlock: any signed-in family member can shelve', async () => {
+    addToShelf.mockResolvedValue(entry);
+    const result = await run(add(), { familyId: 'family-1', isParent: false });
+    expect(result.errors).toBeUndefined();
+  });
+});
+
+describe('Profile.shelf', () => {
+  const q = (arg = '') => `{ profile(id: "p-1") { shelf${arg} { id book { title } } } }`;
+
+  it('lists the profile’s shelf within the caller’s family, optionally one shelf', async () => {
+    getProfile.mockResolvedValue({ id: 'p-1', name: 'Sam', emoji: null, color: null, isParent: false });
+    listShelf.mockResolvedValue([{ id: 'e-1', book: { title: 'My Book' } }]);
+    const all = await run(q(), { familyId: 'family-1' });
+    expect(all.data).toEqual({ profile: { shelf: [{ id: 'e-1', book: { title: 'My Book' } }] } });
+    expect(listShelf).toHaveBeenLastCalledWith(db, 'family-1', 'p-1', undefined);
+
+    await run(q('(shelf: TO_READ)'), { familyId: 'family-1' });
+    expect(listShelf).toHaveBeenLastCalledWith(db, 'family-1', 'p-1', 'to-read');
   });
 });
