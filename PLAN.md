@@ -80,7 +80,10 @@ create table families (
   id uuid primary key,
   name text not null,
   parent_pin_hash text not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Added later (nullable: DSQL rejects NOT NULL/DEFAULT on ADD COLUMN), as are
+  -- failed_pin_attempts and pin_locked_until for the PIN lockout.
+  timezone text                         -- IANA zone; null = America/Chicago
 );
 
 -- Cognito users (the adults). Kids never get accounts.

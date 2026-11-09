@@ -55,6 +55,7 @@ export interface Families {
   name: string;
   parent_pin_hash: string;
   pin_locked_until: Timestamp | null;
+  timezone: string | null;
 }
 
 export interface Profiles {

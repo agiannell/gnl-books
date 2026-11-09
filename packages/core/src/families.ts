@@ -1,5 +1,12 @@
 import type { Db } from './db';
 
+/**
+ * The zone a family's calendar dates are kept in when it has not set one. The
+ * database clock is UTC, so without this a book finished at 7 pm Central is
+ * dated tomorrow.
+ */
+export const DEFAULT_TIMEZONE = 'America/Chicago';
+
 export interface Family {
   id: string;
   name: string;

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrapFamily } from '../src/bootstrap';
 import { addManualBook } from '../src/books/cache';
 import { createDb, type Db } from '../src/db';
+import { DEFAULT_TIMEZONE } from '../src/families';
 import { createProfile } from '../src/profiles';
 import { addToShelf, listShelf } from '../src/shelf';
 
@@ -47,8 +48,9 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
     await db.destroy();
   });
 
-  const today = async () =>
-    (await sql<{ d: string }>`select current_date::text as d`.execute(db)).rows[0]!.d;
+  // The calendar date right now in a zone, computed by the database.
+  const today = async (zone = DEFAULT_TIMEZONE) =>
+    (await sql<{ d: string }>`select (now() at time zone ${zone})::date::text as d`.execute(db)).rows[0]!.d;
 
   it('puts a book on a shelf, with its book, and stamps the start date for currently-reading', async () => {
     const { familyId, kidId } = await newFamily();
@@ -64,7 +66,7 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
       dateRead: null,
       book: { id: bookId, sourceId: null, title: 'Dog Man', authors: ['Test Author'], pages: 120, seriesPosition: 2.5 },
     });
-    // The DB's current_date, as a plain calendar string: no timezone shift.
+    // No zone set, so the default (Central), as a plain calendar string.
     expect(entry!.dateStarted).toBe(await today());
     expect(entry!.dateAdded).toBe(await today());
   });
@@ -74,6 +76,28 @@ describe.skipIf(!endpoint)('shelves (live)', () => {
     const entry = await addToShelf(db, familyId, kidId, await newBook(), 'read');
     expect(entry).toMatchObject({ shelf: 'read', dateStarted: null });
     expect(entry!.dateRead).toBe(await today());
+  });
+
+  // Kiritimati is UTC+14 and Pago Pago UTC-11: 25 hours apart, so at any moment
+  // they are on different calendar days, and neither can be mistaken for UTC's.
+  it.each(['Pacific/Kiritimati', 'Pacific/Pago_Pago'])('dates entries in the family’s own zone (%s)', async (zone) => {
+    const { familyId, kidId } = await newFamily();
+    await db.updateTable('families').set({ timezone: zone }).where('id', '=', familyId).execute();
+    const entry = await addToShelf(db, familyId, kidId, await newBook(), 'read');
+    expect(entry!.dateAdded).toBe(await today(zone));
+    expect(entry!.dateRead).toBe(await today(zone));
+  });
+
+  it('puts the same instant on different days for families in different zones', async () => {
+    const a = await newFamily();
+    const b = await newFamily();
+    await db.updateTable('families').set({ timezone: 'Pacific/Kiritimati' }).where('id', '=', a.familyId).execute();
+    await db.updateTable('families').set({ timezone: 'Pacific/Pago_Pago' }).where('id', '=', b.familyId).execute();
+    const [ea, eb] = [
+      await addToShelf(db, a.familyId, a.kidId, await newBook(), 'read'),
+      await addToShelf(db, b.familyId, b.kidId, await newBook(), 'read'),
+    ];
+    expect(ea!.dateRead).not.toBe(eb!.dateRead);
   });
 
   it('moves a book already on a shelf rather than adding a second entry', async () => {
