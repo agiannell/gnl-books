@@ -1,4 +1,4 @@
-import { useApolloClient, useQuery } from '@apollo/client/react';
+import { useQuery } from '@apollo/client/react';
 import { type FormEvent, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { formatDate, seriesLabel, stars } from './format.ts';
@@ -14,6 +14,7 @@ import {
   REVIEW_BOOK,
   type ShelfName,
 } from './queries.ts';
+import { type Edit, useEdit } from './useEdit.ts';
 
 const SHELF_LABELS: Record<ShelfName, string> = {
   TO_READ: 'Want to read',
@@ -24,30 +25,7 @@ const SHELF_LABELS: Record<ShelfName, string> = {
 // Matches the API's limit on a review.
 const MAX_REVIEW_CHARACTERS = 5000;
 
-/** Runs one edit at a time and keeps what the reader needs to see: that it is running, or why it failed. */
-function useEdit() {
-  const client = useApolloClient();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Resolves to whether the edit worked, so a form can clear itself only on success.
-  async function edit(mutation: Parameters<typeof client.mutate>[0]): Promise<boolean> {
-    if (busy) return false;
-    setBusy(true);
-    setError(null);
-    try {
-      await client.mutate(mutation);
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-  return { edit, busy, error };
-}
-
-function Rating({ entry, edit, busy }: { entry: BookPageEntry; edit: ReturnType<typeof useEdit>['edit']; busy: boolean }) {
+function Rating({ entry, edit, busy }: { entry: BookPageEntry; edit: Edit; busy: boolean }) {
   const rate = (rating: number | null) =>
     edit({ mutation: RATE_BOOK, variables: { shelfEntryId: entry.id, rating } });
   return (
@@ -77,7 +55,7 @@ function Rating({ entry, edit, busy }: { entry: BookPageEntry; edit: ReturnType<
   );
 }
 
-function Review({ entry, edit, busy }: { entry: BookPageEntry; edit: ReturnType<typeof useEdit>['edit']; busy: boolean }) {
+function Review({ entry, edit, busy }: { entry: BookPageEntry; edit: Edit; busy: boolean }) {
   const saved = entry.review ?? '';
   const [text, setText] = useState(saved);
   const changed = text.trim() !== saved;
@@ -102,7 +80,7 @@ function Review({ entry, edit, busy }: { entry: BookPageEntry; edit: ReturnType<
   );
 }
 
-function Progress({ entry, edit, busy }: { entry: BookPageEntry; edit: ReturnType<typeof useEdit>['edit']; busy: boolean }) {
+function Progress({ entry, edit, busy }: { entry: BookPageEntry; edit: Edit; busy: boolean }) {
   const [text, setText] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -134,7 +112,7 @@ function Progress({ entry, edit, busy }: { entry: BookPageEntry; edit: ReturnTyp
   );
 }
 
-function Finish({ entry, edit, busy }: { entry: BookPageEntry; edit: ReturnType<typeof useEdit>['edit']; busy: boolean }) {
+function Finish({ entry, edit, busy }: { entry: BookPageEntry; edit: Edit; busy: boolean }) {
   const [date, setDate] = useState('');
   return (
     <section aria-labelledby="finish-heading">
