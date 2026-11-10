@@ -1,6 +1,9 @@
 import { useApolloClient } from '@apollo/client/react';
+import { MagnifyingGlassIcon } from '@radix-ui/react-icons';
+import { Button, Card, Flex, Heading, Strong, Text, TextField } from '@radix-ui/themes';
 import { type FormEvent, useState } from 'react';
 import { Link, useParams } from 'react-router';
+import Cover from './Cover.tsx';
 import { seriesLabel } from './format.ts';
 import {
   ADD_TO_SHELF,
@@ -9,6 +12,7 @@ import {
   type SearchHit,
   type ShelfName,
 } from './queries.ts';
+import { Alert, Field, Loading, Status, TextLink } from './ui.tsx';
 
 // Matches the API's limit on a search.
 const MAX_QUERY_LENGTH = 200;
@@ -50,27 +54,48 @@ function Hit({ hit, profileId }: { hit: SearchHit; profileId: string }) {
 
   return (
     <li>
-      <strong>{hit.title}</strong>
-      <div>by {hit.authors.join(', ')}</div>
-      {seriesText && <div>{seriesText}</div>}
-      {(hit.releaseYear || hit.pages) && (
-        <div>{[hit.releaseYear, hit.pages && `${hit.pages} pages`].filter(Boolean).join(' · ')}</div>
-      )}
-      <div>
-        {SHELF_BUTTONS.map(({ shelf, label, done }) => (
-          <button
-            key={shelf}
-            type="button"
-            disabled={!hit.sourceId || outcome?.kind === 'adding'}
-            onClick={() => void add(shelf, done)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {outcome?.kind === 'adding' && <p>Adding…</p>}
-      {outcome?.kind === 'added' && <p role="status">{outcome.text}</p>}
-      {outcome?.kind === 'failed' && <p role="alert">Something went wrong: {outcome.message}</p>}
+      <Card size="2">
+        <div className="book-row">
+          <Cover url={hit.coverUrl} />
+          <div className="book-body">
+            <Flex direction="column" gap="1">
+              <Text as="div" size="4">
+                <Strong>{hit.title}</Strong>
+              </Text>
+              <Text as="div" size="2" color="gray">
+                by {hit.authors.join(', ')}
+              </Text>
+              {seriesText && (
+                <Text as="div" size="2" color="gray">
+                  {seriesText}
+                </Text>
+              )}
+              {(hit.releaseYear || hit.pages) && (
+                <Text as="div" size="2" color="gray">
+                  {[hit.releaseYear, hit.pages && `${hit.pages} pages`].filter(Boolean).join(' · ')}
+                </Text>
+              )}
+              <Flex gap="2" wrap="wrap" mt="2">
+                {SHELF_BUTTONS.map(({ shelf, label, done }) => (
+                  <Button
+                    key={shelf}
+                    type="button"
+                    size="2"
+                    variant="soft"
+                    disabled={!hit.sourceId || outcome?.kind === 'adding'}
+                    onClick={() => void add(shelf, done)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </Flex>
+              {outcome?.kind === 'adding' && <Loading>Adding…</Loading>}
+              {outcome?.kind === 'added' && <Status>{outcome.text}</Status>}
+              {outcome?.kind === 'failed' && <Alert>Something went wrong: {outcome.message}</Alert>}
+            </Flex>
+          </div>
+        </div>
+      </Card>
     </li>
   );
 }
@@ -107,36 +132,52 @@ export default function SearchPage() {
   }
 
   return (
-    <>
-      <h1>Find a book</h1>
+    <Flex direction="column" gap="5">
+      <Heading as="h1" size={{ initial: '7', sm: '8' }}>
+        Find a book
+      </Heading>
       <form onSubmit={(event) => void search(event)}>
-        <label>
-          Title, author or ISBN{' '}
-          <input value={text} maxLength={MAX_QUERY_LENGTH} onChange={(event) => setText(event.target.value)} />
-        </label>{' '}
-        <button type="submit" disabled={searching || !text.trim()}>
-          Search
-        </button>
+        <Flex gap="3" align="end" wrap="wrap">
+          <div style={{ flex: '1 1 16rem' }}>
+            <Field label="Title, author or ISBN">
+              <TextField.Root
+                size="3"
+                value={text}
+                maxLength={MAX_QUERY_LENGTH}
+                onChange={(event) => setText(event.target.value)}
+              >
+                <TextField.Slot>
+                  <MagnifyingGlassIcon aria-hidden="true" />
+                </TextField.Slot>
+              </TextField.Root>
+            </Field>
+          </div>
+          <Button type="submit" size="3" disabled={searching || !text.trim()}>
+            Search
+          </Button>
+        </Flex>
       </form>
-      {searching && <p>Searching…</p>}
-      {error && <p role="alert">Something went wrong: {error}</p>}
+      {searching && <Loading>Searching…</Loading>}
+      {error && <Alert>Something went wrong: {error}</Alert>}
       {hits &&
         !searching &&
         (hits.books.length === 0 ? (
-          <p>No books found for “{hits.query}”.</p>
+          <Text color="gray">No books found for “{hits.query}”.</Text>
         ) : (
-          <ul>
+          <ul className="card-list">
             {hits.books.map((hit) => (
               <Hit key={hit.sourceId ?? hit.title} hit={hit} profileId={profileId} />
             ))}
           </ul>
         ))}
-      <p>
-        Can’t find it? <Link to={`/p/${profileId}/add`}>Add it yourself</Link>
-      </p>
-      <p>
-        <Link to={`/p/${profileId}`}>Back to the shelves</Link>
-      </p>
-    </>
+      <Text>
+        Can’t find it? <TextLink to={`/p/${profileId}/add`}>Add it yourself</TextLink>
+      </Text>
+      <Flex>
+        <Button asChild variant="ghost" color="gray">
+          <Link to={`/p/${profileId}`}>Back to the shelves</Link>
+        </Button>
+      </Flex>
+    </Flex>
   );
 }

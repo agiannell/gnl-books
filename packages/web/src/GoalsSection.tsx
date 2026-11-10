@@ -1,7 +1,9 @@
 import { useQuery } from '@apollo/client/react';
+import { Button, Flex, Separator, Strong, Text, TextField } from '@radix-ui/themes';
 import { type FormEvent, useState } from 'react';
-import { type Edit, useEdit } from './useEdit.ts';
 import { type GoalSummary, REMOVE_GOAL, SET_GOAL, SETTINGS_GOALS, type SettingsGoalsData } from './queries.ts';
+import { Alert, Field, Loading, Panel } from './ui.tsx';
+import { type Edit, useEdit } from './useEdit.ts';
 
 // The API's limits on a goal (packages/core/src/goals.ts).
 const MIN_YEAR = 2000;
@@ -38,23 +40,34 @@ function Goal({ profileId, name, year, goal, edit, busy }: {
 
   return (
     <li>
-      <strong>{name}</strong>:{' '}
-      {goal ? `${goal.booksRead} of ${goal.target} ${goal.target === 1 ? 'book' : 'books'} read` : 'no goal'}
-      <form onSubmit={(event) => void save(event)}>
-        <label>
-          Books to read in {year} for {name}{' '}
-          <input value={text} inputMode="numeric" onChange={(event) => setText(event.target.value)} />
-        </label>{' '}
-        <button type="submit" disabled={busy}>
-          Set goal for {name}
-        </button>{' '}
-        {goal && (
-          <button type="button" disabled={busy} onClick={() => void remove()}>
-            Remove goal for {name}
-          </button>
-        )}
-        {problem && <p role="alert">{problem}</p>}
-      </form>
+      <Flex direction="column" gap="2">
+        <Text as="div" size="4">
+          <Strong>{name}</Strong>:{' '}
+          {goal ? `${goal.booksRead} of ${goal.target} ${goal.target === 1 ? 'book' : 'books'} read` : 'no goal'}
+        </Text>
+        <form onSubmit={(event) => void save(event)}>
+          <Flex gap="3" align="end" wrap="wrap">
+            <div style={{ flex: '1 1 10rem' }}>
+              <Field label={`Books to read in ${year} for ${name}`}>
+                <TextField.Root size="3" value={text} inputMode="numeric" onChange={(event) => setText(event.target.value)} />
+              </Field>
+            </div>
+            <Button type="submit" size="3" disabled={busy}>
+              Set goal for {name}
+            </Button>
+            {goal && (
+              <Button type="button" size="3" variant="soft" color="gray" disabled={busy} onClick={() => void remove()}>
+                Remove goal for {name}
+              </Button>
+            )}
+          </Flex>
+          {problem && (
+            <div style={{ marginTop: 'var(--space-2)' }}>
+              <Alert>{problem}</Alert>
+            </div>
+          )}
+        </form>
+      </Flex>
     </li>
   );
 }
@@ -70,22 +83,24 @@ export default function GoalsSection() {
   const { edit, busy, error: editError } = useEdit();
 
   return (
-    <section aria-labelledby="goals-heading">
-      <h2 id="goals-heading">Reading goals</h2>
-      <p>
-        <button type="button" disabled={year <= MIN_YEAR} onClick={() => setYear(year - 1)}>
+    <Panel id="goals-heading" title="Reading goals">
+      <Flex align="center" gap="3" wrap="wrap">
+        <Button type="button" variant="soft" disabled={year <= MIN_YEAR} onClick={() => setYear(year - 1)}>
           Earlier year
-        </button>{' '}
-        <strong>{year}</strong>{' '}
-        <button type="button" disabled={year >= MAX_YEAR} onClick={() => setYear(year + 1)}>
+        </Button>
+        <Text size="5">
+          <Strong>{year}</Strong>
+        </Text>
+        <Button type="button" variant="soft" disabled={year >= MAX_YEAR} onClick={() => setYear(year + 1)}>
           Later year
-        </button>
-      </p>
-      {error && <p role="alert">Something went wrong: {error.message}</p>}
-      {!error && (loading || !data) && <p>Loading…</p>}
+        </Button>
+      </Flex>
+      {error && <Alert>Something went wrong: {error.message}</Alert>}
+      {!error && (loading || !data) && <Loading />}
       {!error && data && (
-        <ul>
-          {data.family.profiles.map((profile) => (
+        <ul className="card-list">
+          {data.family.profiles.flatMap((profile, index) => [
+            index > 0 ? <Separator key={`sep-${profile.id}`} size="4" /> : null,
             // Reset the box when the saved goal (or the year) changes.
             <Goal
               key={`${profile.id}-${year}-${profile.goal?.target ?? 'none'}`}
@@ -95,11 +110,11 @@ export default function GoalsSection() {
               goal={profile.goal}
               edit={edit}
               busy={busy}
-            />
-          ))}
+            />,
+          ])}
         </ul>
       )}
-      {editError && <p role="alert">Something went wrong: {editError}</p>}
-    </section>
+      {editError && <Alert>Something went wrong: {editError}</Alert>}
+    </Panel>
   );
 }

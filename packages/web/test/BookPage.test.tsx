@@ -46,6 +46,7 @@ const bookPage = (entry: Record<string, unknown> = {}, bookOver: Record<string, 
             authors: ['Dav Pilkey'],
             pages: 240,
             releaseYear: 2016,
+            coverUrl: null,
             seriesName: 'Dog Man',
             seriesPosition: 1,
             description: 'A hero with a dog’s head.',
@@ -73,6 +74,20 @@ describe('BookPage', () => {
     expect(screen.getByText('A hero with a dog’s head.')).toBeTruthy();
     expect(screen.getByText(/On Sam’s shelf:/).textContent).toBe('On Sam’s shelf: Want to read');
     expect(api.variables[0]).toEqual({ id: 'p-2' });
+  });
+
+  it('shows the book’s cover, or a plain tile when it has none', async () => {
+    renderAt(PATH, { BookPage: bookPage({}, { coverUrl: 'https://assets.hardcover.app/books/1/cover.jpg' }) });
+    await screen.findByRole('heading', { name: 'Dog Man' });
+    expect(document.querySelector('.cover img')!.getAttribute('src')).toBe('https://assets.hardcover.app/books/1/cover.jpg');
+    expect(document.querySelector('.cover-lg')).not.toBeNull();
+  });
+
+  it('shows a plain tile when the book has no cover', async () => {
+    renderAt(PATH, { BookPage: bookPage() });
+    await screen.findByRole('heading', { name: 'Dog Man' });
+    expect(document.querySelector('.cover img')).toBeNull();
+    expect(document.querySelector('.cover-placeholder')).not.toBeNull();
   });
 
   it('says so when the book is not on that reader’s shelves', async () => {
@@ -104,7 +119,7 @@ describe('BookPage', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: '4 stars' }).getAttribute('aria-pressed')).toBe('true'));
       expect(api.variables[1]).toEqual({ shelfEntryId: 'e-1', rating: 4 });
       expect(screen.getByRole('button', { name: '5 stars' }).getAttribute('aria-pressed')).toBe('false');
-      expect(screen.getByText('★★★★☆')).toBeTruthy();
+      expect(screen.getByText('4 out of 5 stars')).toBeTruthy();
       await user.click(screen.getByRole('button', { name: 'Clear rating' }));
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Clear rating' })).toBeNull());
       expect(lastCall(api)).toEqual({ shelfEntryId: 'e-1', rating: null });
@@ -172,7 +187,7 @@ describe('BookPage', () => {
         {
           ...entryFields(),
           dateRead: null,
-          book: { __typename: 'Book', id: 'b-1', title: 'Dog Man', authors: ['Dav Pilkey'], pages: 240, seriesName: null, seriesPosition: null },
+          book: { __typename: 'Book', id: 'b-1', title: 'Dog Man', authors: ['Dav Pilkey'], pages: 240, coverUrl: null, seriesName: null, seriesPosition: null },
         },
       ]),
       BookPage: [bookPage({ rating: null }), bookPage({ rating: 3 })],
@@ -374,7 +389,7 @@ describe('BookPage', () => {
       rating: null,
       dateRead: null,
       currentPage: null,
-      book: { __typename: 'Book', id: 'b-1', title: 'Dog Man', authors: ['Dav Pilkey'], pages: 240, seriesName: null, seriesPosition: null },
+      book: { __typename: 'Book', id: 'b-1', title: 'Dog Man', authors: ['Dav Pilkey'], pages: 240, coverUrl: null, seriesName: null, seriesPosition: null },
       ...over,
     });
     const profile = (shelf: unknown[]) => ({

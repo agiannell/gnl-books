@@ -86,10 +86,13 @@ describe('the readers section of the settings', () => {
     const section = await screen.findByRole('region', { name: 'Readers' });
     await within(section).findByText('Delete Sam');
     const items = within(section).getAllByRole('listitem');
-    expect(items.map((li) => li.textContent)).toEqual([
-      'Pat (parent) Delete Pat',
-      '🦊 Sam Delete Sam',
-    ]);
+    // Each reader: their name, a "Parent" badge only for a parent, and a delete button named for them.
+    expect(items.map((li) => li.querySelector('strong')?.textContent)).toEqual(['Pat', 'Sam']);
+    expect(items.map((li) => within(li).queryByText('Parent') !== null)).toEqual([true, false]);
+    expect(items.map((li) => within(li).getByRole('button').textContent)).toEqual(['Delete Pat', 'Delete Sam']);
+    // The emoji is a picture beside the name, hidden from screen readers; a reader without one has none.
+    expect(items[1]!.querySelector('.reader-avatar')?.textContent).toBe('🦊');
+    expect(items[0]!.querySelector('.reader-avatar')?.textContent).toBe('');
     expect(names(api)).toEqual(['SettingsProfiles']);
   });
 
