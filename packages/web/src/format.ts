@@ -13,5 +13,9 @@ export function formatDate(date: string): string {
   });
 }
 
+/** "Dog Man #2", "Dog Man #2.5", or just the series name when the position is unknown; null outside a series. */
+export const seriesLabel = (book: { seriesName: string | null; seriesPosition: number | null }) =>
+  book.seriesName && (book.seriesPosition === null ? book.seriesName : `${book.seriesName} #${book.seriesPosition}`);
+
 /** A rating from 1 to 5 as filled and empty stars: 4 gives ★★★★☆. */
 export const stars = (rating: number) => '★'.repeat(rating) + '☆'.repeat(5 - rating);

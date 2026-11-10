@@ -1,4 +1,4 @@
-import { formatDate, stars } from './format.ts';
+import { formatDate, seriesLabel, stars } from './format.ts';
 import type { ShelfItem, ShelfName } from './queries.ts';
 
 // In the order a reader cares about: what they are in the middle of first.
@@ -8,18 +8,14 @@ const SECTIONS: { shelf: ShelfName; title: string; empty: string }[] = [
   { shelf: 'READ', title: 'Read', empty: 'No finished books yet.' },
 ];
 
-/** "Dog Man #2", "Dog Man #2.5", or just the series name when the position is unknown. */
-const series = (book: ShelfItem['book']) =>
-  book.seriesName && (book.seriesPosition === null ? book.seriesName : `${book.seriesName} #${book.seriesPosition}`);
-
 function Entry({ item }: { item: ShelfItem }) {
   const { book } = item;
-  const seriesLabel = series(book);
+  const seriesText = seriesLabel(book);
   return (
     <li>
       <strong>{book.title}</strong>
       <div>by {book.authors.join(', ')}</div>
-      {seriesLabel && <div>{seriesLabel}</div>}
+      {seriesText && <div>{seriesText}</div>}
       {item.shelf === 'CURRENTLY_READING' && item.currentPage !== null && (
         <div>{book.pages ? `Page ${item.currentPage} of ${book.pages}` : `Page ${item.currentPage}`}</div>
       )}
