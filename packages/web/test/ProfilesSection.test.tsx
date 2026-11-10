@@ -27,7 +27,7 @@ const renderAt = (path: string, handlers: Parameters<typeof fakeApi>[0]) => {
         },
       }
     : {};
-  const api = fakeApi({ RenewParentUnlock: renewed, SettingsGoals: () => goalsFor(latest), ...handlers, ...readersReply });
+  const api = fakeApi({ RenewParentUnlock: renewed, SettingsGoals: () => goalsFor(latest), SettingsTimezone: zoneReply, ...handlers, ...readersReply });
   const session = createParentSession();
   // Already unlocked: the PIN screen has its own tests.
   session.set({ token: 'parent', expiresAt: Date.now() + 10 * 60_000 });
@@ -62,7 +62,8 @@ const goalsFor = (profiles: { id: string; name: string }[]) => ({
     family: { __typename: 'Family', id: 'f-1', profiles: profiles.map((p) => ({ __typename: 'Profile', id: p.id, name: p.name, goal: null })) },
   },
 });
-const elsewhere = new Set(['RenewParentUnlock', 'SettingsGoals']);
+const zoneReply = { data: { family: { __typename: 'Family', id: 'f-1', timezone: 'America/Chicago' } } };
+const elsewhere = new Set(['RenewParentUnlock', 'SettingsGoals', 'SettingsTimezone']);
 const names = (api: ReturnType<typeof fakeApi>) => api.calls.map((c) => c.operationName).filter((name) => !elsewhere.has(name));
 // The variables of the request at position `n` in `names(api)`.
 const variablesOf = (api: ReturnType<typeof fakeApi>, n: number) => {
@@ -234,7 +235,7 @@ describe('the readers section of the settings', () => {
 
   it('sends the parent token with the changes', async () => {
     const seen: (string | null)[] = [];
-    const api = fakeApi({ RenewParentUnlock: renewed, SettingsGoals: goalsFor([PAT]), SettingsProfiles: [readers(PAT), readers(PAT)], CreateProfile: created });
+    const api = fakeApi({ RenewParentUnlock: renewed, SettingsGoals: goalsFor([PAT]), SettingsTimezone: zoneReply, SettingsProfiles: [readers(PAT), readers(PAT)], CreateProfile: created });
     const session = createParentSession();
     session.set({ token: 'parent', expiresAt: Date.now() + 600_000 });
     const client = createApolloClient({

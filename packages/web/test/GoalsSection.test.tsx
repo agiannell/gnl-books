@@ -34,7 +34,12 @@ const goals = (pat: unknown, sam: unknown = null) => ({
 const failure = (message: string) => ({ errors: [{ message }] });
 
 const renderSettings = (handlers: Parameters<typeof fakeApi>[0]) => {
-  const api = fakeApi({ SettingsProfiles: readers, RenewParentUnlock: renewed, ...handlers });
+  const api = fakeApi({
+    SettingsProfiles: readers,
+    SettingsTimezone: { data: { family: { __typename: 'Family', id: 'f-1', timezone: 'America/Chicago' } } },
+    RenewParentUnlock: renewed,
+    ...handlers,
+  });
   const session = createParentSession();
   session.set({ token: 'parent', expiresAt: Date.now() + 600_000 });
   const client = createApolloClient({ getAccessToken: async () => 'tok', getParentToken: session.getToken, fetch: api.fetch });

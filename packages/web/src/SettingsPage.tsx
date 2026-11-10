@@ -3,6 +3,7 @@ import ExportSection from './ExportSection.tsx';
 import GoalsSection from './GoalsSection.tsx';
 import ParentGate from './ParentGate.tsx';
 import ProfilesSection from './ProfilesSection.tsx';
+import TimezoneSection from './TimezoneSection.tsx';
 
 /** Everything only a parent may change. Behind the PIN; the sections arrive one at a time. */
 export default function SettingsPage() {
@@ -12,6 +13,7 @@ export default function SettingsPage() {
         <h1>Settings</h1>
         <ProfilesSection />
         <GoalsSection />
+        <TimezoneSection />
         <ExportSection />
       </ParentGate>
       <p>
