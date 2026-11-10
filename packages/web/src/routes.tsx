@@ -3,6 +3,7 @@ import App from './App.tsx';
 import Home from './Home.tsx';
 import NotFound from './NotFound.tsx';
 import ProfilePage from './ProfilePage.tsx';
+import SearchPage from './SearchPage.tsx';
 
 // Only the route definitions: no router is created here, so a test can build the
 // same tree with `createMemoryRouter(routes)`, and main.tsx makes the browser one.
@@ -14,6 +15,7 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, element: <Home /> },
       { path: 'p/:profileId', element: <ProfilePage /> },
+      { path: 'p/:profileId/search', element: <SearchPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },

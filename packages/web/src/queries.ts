@@ -61,6 +61,38 @@ export const CREATE_FAMILY = gql`
   }
 `;
 
+export const SEARCH_BOOKS = gql`
+  query SearchBooks($query: String!) {
+    searchBooks(query: $query) {
+      sourceId
+      title
+      authors
+      pages
+      releaseYear
+      seriesName
+      seriesPosition
+    }
+  }
+`;
+
+// A search hit becomes one of our books only when it is imported; shelves refer to our id.
+export const IMPORT_BOOK = gql`
+  mutation ImportBook($sourceId: String!) {
+    importBook(sourceId: $sourceId) {
+      id
+    }
+  }
+`;
+
+export const ADD_TO_SHELF = gql`
+  mutation AddToShelf($profileId: ID!, $bookId: ID!, $shelf: Shelf!) {
+    addToShelf(profileId: $profileId, bookId: $bookId, shelf: $shelf) {
+      id
+      shelf
+    }
+  }
+`;
+
 export interface MeData {
   me: { familyId: string | null };
 }
@@ -96,6 +128,17 @@ export interface ShelfItem {
     seriesName: string | null;
     seriesPosition: number | null;
   };
+}
+
+/** A catalog hit from the search. `sourceId` is the catalog's id, not ours. */
+export interface SearchHit {
+  sourceId: string | null;
+  title: string;
+  authors: string[];
+  pages: number | null;
+  releaseYear: number | null;
+  seriesName: string | null;
+  seriesPosition: number | null;
 }
 
 export interface GoalSummary {
