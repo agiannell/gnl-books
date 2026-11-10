@@ -8,6 +8,7 @@ import {
   ServerError,
   TimeoutError,
 } from '@hardcover/sdk';
+import { worthShowing } from './relevance';
 import { BookSourceError, type BookSearchResult, type BookSource } from './types';
 
 // The only file that knows Hardcover exists. The package is 0.x ("a minor may
@@ -16,7 +17,9 @@ import { BookSourceError, type BookSearchResult, type BookSource } from './types
 
 /** What this file uses of the SDK client, so tests can stand in for it. */
 export interface HardcoverClientLike {
-  search: { books(query: string, options?: { perPage?: number }): Promise<{ hits: unknown[] }> };
+  search: {
+    books(query: string, options?: { perPage?: number; page?: number; filterBy?: string }): Promise<{ hits: unknown[] }>;
+  };
   books: {
     get(id: number): Promise<unknown>;
     editions(bookId: number, options?: { limit?: number }): Promise<{ items: unknown[] }>;
@@ -35,6 +38,14 @@ export interface HardcoverSourceOptions {
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 25;
 const MAX_ID = 2_147_483_647;
+/**
+ * Pages of hits to look through, of MAX_LIMIT each. One page is not enough: once the box sets and
+ * stray listings are taken out of a series' search, its later books are on the second page (all of
+ * Percy Jackson after the first two are).
+ */
+const POOL_PAGES = 2;
+/** Typesense filter: leave out box sets, so they do not use up the pages. */
+const NO_COMPILATIONS = 'compilation:false';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
@@ -157,15 +168,48 @@ export function createHardcoverSource(options: HardcoverSourceOptions): BookSour
     async search(query, { limit = DEFAULT_LIMIT } = {}) {
       const text = query.trim();
       if (!text) return [];
+
+      /** The candidates for a search: POOL_PAGES pages asked for at once, in Hardcover's order, each book once. */
+      const candidates = async (filterBy?: string): Promise<unknown[]> => {
+        const pages = await Promise.all(
+          Array.from({ length: POOL_PAGES }, (_, i) =>
+            client.search.books(text, { perPage: MAX_LIMIT, page: i + 1, ...(filterBy && { filterBy }) }),
+          ),
+        );
+        const seen = new Set<unknown>();
+        return pages
+          .flatMap((page) => page.hits)
+          .filter((hit) => {
+            const id = isRecord(hit) ? hit.id : undefined;
+            if (id === undefined) return true;
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+          });
+      };
+
       try {
-        const { hits } = await client.search.books(text, { perPage: Math.min(Math.max(limit, 1), MAX_LIMIT) });
+        let hits: unknown[];
+        try {
+          hits = await candidates(NO_COMPILATIONS);
+        } catch (error) {
+          // The filter is the one thing here that is ours rather than Hardcover's: if it is refused (a field
+          // renamed, say) search must not break with it. A bad token, a rate limit or a timeout is not the
+          // filter's fault and would fail again, so those are reported as they are.
+          const failure = toBookSourceError(error);
+          if (!(failure instanceof BookSourceError) || failure.code !== 'unavailable') throw failure;
+          hits = await candidates();
+        }
+        // Nothing that is not a box set matches: show the box sets rather than an empty list.
+        if (hits.length === 0) hits = await candidates();
+
         const results: BookSearchResult[] = [];
-        for (const hit of hits) {
+        for (const hit of worthShowing(hits, text)) {
           const result = parseHit(hit);
           if (result) results.push(result);
           else warn('Dropped a malformed Hardcover search hit', hit);
         }
-        return results;
+        return results.slice(0, Math.max(limit, 1));
       } catch (error) {
         throw toBookSourceError(error);
       }

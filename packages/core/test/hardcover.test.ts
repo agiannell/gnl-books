@@ -1,17 +1,27 @@
-import { HardcoverClient } from '@hardcover/sdk';
+import { ActionError, AuthenticationError, HardcoverClient, TimeoutError } from '@hardcover/sdk';
 import { MockTransport, type MockResponse } from '@hardcover/sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { createHardcoverSource, type HardcoverClientLike } from '../src/books/hardcover';
 import { BookSourceError } from '../src/books/types';
 
-// A stand-in for the SDK client that returns canned data.
-function fakeClient(over: { hits?: unknown[]; book?: unknown; editions?: unknown[] } = {}) {
+// A stand-in for the SDK client that returns canned data: `hits` are the first page of a search and
+// `page2` the second (empty unless given). `search` replaces both, to see or answer each request itself.
+function fakeClient(
+  over: {
+    hits?: unknown[];
+    page2?: unknown[];
+    search?: HardcoverClientLike['search']['books'];
+    book?: unknown;
+    editions?: unknown[];
+  } = {},
+) {
   const calls = { search: vi.fn(), get: vi.fn(), editions: vi.fn() };
   const client: HardcoverClientLike = {
     search: {
       books: async (q, o) => {
         calls.search(q, o);
-        return { hits: over.hits ?? [] };
+        if (over.search) return over.search(q, o);
+        return { hits: (o?.page ?? 1) === 1 ? (over.hits ?? []) : (over.page2 ?? []) };
       },
     },
     books: {
@@ -122,12 +132,250 @@ describe('search', () => {
     expect(calls.search).not.toHaveBeenCalled();
   });
 
-  it('trims the query and clamps the page size to what the API allows', async () => {
-    const { source: s, calls } = source();
+  it('trims the query, and always asks for the biggest page the API allows, however few are wanted', async () => {
+    const { source: s, calls } = source({ hits: [{ id: 1, title: 'A book' }] });
     await s.search('  dog man ', { limit: 1000 });
-    await s.search('x', { limit: 0 });
-    expect(calls.search).toHaveBeenNthCalledWith(1, 'dog man', { perPage: 25 });
-    expect(calls.search).toHaveBeenNthCalledWith(2, 'x', { perPage: 1 });
+    await s.search('x', { limit: 1 });
+    // Two pages of 25 each time (the second call of each pair is page 2).
+    expect(calls.search.mock.calls.map(([q, o]) => [q, o.perPage, o.page])).toEqual([
+      ['dog man', 25, 1],
+      ['dog man', 25, 2],
+      ['x', 25, 1],
+      ['x', 25, 2],
+    ]);
+  });
+
+  it('gives back no more than was asked for, and between 1 and 25', async () => {
+    const hits = Array.from({ length: 25 }, (_, i) => ({ id: i + 1, title: `Book ${i + 1}`, usersCount: 100 }));
+    const { source: s } = source({ hits });
+    expect(await s.search('book')).toHaveLength(20);
+    expect(await s.search('book', { limit: 3 })).toHaveLength(3);
+    expect(await s.search('book', { limit: 0 })).toHaveLength(1);
+    expect(await s.search('book', { limit: 1000 })).toHaveLength(25);
+  });
+});
+
+describe('search pool', () => {
+  const book = (id: number, title: string, usersCount = 100, over: Record<string, unknown> = {}) => ({ id, title, usersCount, ...over });
+  const results = async (over: Parameters<typeof fakeClient>[0], query = 'anything') => {
+    const { source: s, calls } = source(over);
+    return { titles: (await s.search(query)).map((r) => r.title), calls };
+  };
+  const requestsOf = (calls: { search: ReturnType<typeof vi.fn> }) =>
+    calls.search.mock.calls.map(([, o]) => [o.page, o.filterBy]);
+
+  it('looks at two pages at once, leaving out box sets', async () => {
+    const { calls } = await results({ hits: [book(1, 'A')] });
+    expect(requestsOf(calls)).toEqual([
+      [1, 'compilation:false'],
+      [2, 'compilation:false'],
+    ]);
+  });
+
+  it('puts the second page after the first', async () => {
+    const { titles } = await results({ hits: [book(1, 'One'), book(2, 'Two')], page2: [book(3, 'Three')] });
+    expect(titles).toEqual(['One', 'Two', 'Three']);
+  });
+
+  it('shows a book once, when both pages have it', async () => {
+    const { titles } = await results({ hits: [book(1, 'One'), book(2, 'Two')], page2: [book(2, 'Two again'), book(3, 'Three')] });
+    expect(titles).toEqual(['One', 'Two', 'Three']);
+  });
+
+  it('finds a series’ later books on the second page, in reader order', async () => {
+    const series = ['The Series'];
+    const { titles } = await results(
+      {
+        hits: [book(1, 'The Series Companion', 60, { seriesNames: series }), book(2, 'Book One', 4000, { seriesNames: series })],
+        page2: [book(3, 'Book Two', 3500, { seriesNames: series }), book(4, 'Book Three', 3000, { seriesNames: series })],
+      },
+      'the series',
+    );
+    expect(titles).toEqual(['Book One', 'Book Two', 'Book Three', 'The Series Companion']);
+  });
+
+  it('asks again without the filter when nothing but box sets matches, and shows them', async () => {
+    const { source: s, calls } = source({
+      search: async (_q, o) => ({ hits: o?.filterBy ? [] : [book(1, 'Boxed Set', 10, { compilation: true })] }),
+    });
+    expect((await s.search('boxed set')).map((r) => r.title)).toEqual(['Boxed Set']);
+    expect(requestsOf(calls)).toEqual([
+      [1, 'compilation:false'],
+      [2, 'compilation:false'],
+      [1, undefined],
+      [2, undefined],
+    ]);
+  });
+
+  it('does not ask again when the filtered search found something', async () => {
+    const { calls } = await results({ hits: [book(1, 'A')] });
+    expect(calls.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not ask again, twice over, when there is nothing at all', async () => {
+    const { source: s, calls } = source({ hits: [], page2: [] });
+    expect(await s.search('zzzz')).toEqual([]);
+    // Filtered, then once more without: four requests, no more.
+    expect(calls.search).toHaveBeenCalledTimes(4);
+  });
+
+  describe('if Hardcover refuses the filter', () => {
+    const refuse = (o?: { filterBy?: string }) => {
+      if (o?.filterBy) throw new ActionError('search', ['Could not find a filter field named `compilation`'], null);
+      return { hits: [book(1, 'Still works')] };
+    };
+
+    it('searches without it, so search keeps working', async () => {
+      const { source: s, calls } = source({ search: async (_q, o) => refuse(o) });
+      expect((await s.search('works')).map((r) => r.title)).toEqual(['Still works']);
+      expect(requestsOf(calls).some(([, filter]) => filter === undefined)).toBe(true);
+    });
+
+    it('still leaves out the box sets itself, from what it gets back', async () => {
+      const { source: s } = source({
+        search: async (_q, o) => {
+          if (o?.filterBy) throw new ActionError('search', ['no such field'], null);
+          return { hits: [book(1, 'The book'), book(2, 'The Complete Collection', 500, { compilation: true })] };
+        },
+      });
+      expect((await s.search('the')).map((r) => r.title)).toEqual(['The book']);
+    });
+
+    it('reports a failure of the plain search too', async () => {
+      const { source: s } = source({ search: async () => Promise.reject(new ActionError('search', ['down'], null)) });
+      await expect(s.search('x')).rejects.toMatchObject({ code: 'unavailable' });
+    });
+  });
+
+  describe('a failure that is not the filter’s fault', () => {
+    it.each([
+      ['a bad token', new AuthenticationError('expired'), 'unauthorized'],
+      ['a timeout', new TimeoutError('slow'), 'timeout'],
+    ])('is reported straight away for %s, without asking again', async (_name, error, code) => {
+      const { source: s, calls } = source({ search: async () => Promise.reject(error) });
+      await expect(s.search('x')).rejects.toMatchObject({ code });
+      // Two pages were asked for at once; nothing was retried.
+      expect(calls.search).toHaveBeenCalledTimes(2);
+    });
+
+    it('is reported as it is when it is a bug in our own code', async () => {
+      const boom = new TypeError('a bug');
+      const { source: s } = source({ search: async () => Promise.reject(boom) });
+      await expect(s.search('x')).rejects.toBe(boom);
+    });
+  });
+});
+
+describe('search relevance', () => {
+  const hit = (id: number, title: string, usersCount?: number, over: Record<string, unknown> = {}) => ({
+    id,
+    title,
+    ...(usersCount !== undefined && { usersCount }),
+    ...over,
+  });
+  const titles = async (hits: unknown[], limit?: number) => {
+    const { source: s } = source({ hits });
+    return (await s.search('anything', limit === undefined ? {} : { limit })).map((r) => r.title);
+  };
+
+  // The numbers are from a real search for "Harry Potter" (852 matches), shortened.
+  const harryPotter = [
+    hit(1, "Harry Potter and the Philosopher's Stone", 17264, { compilation: false }),
+    hit(2, 'Harry Potter and the Chamber of Secrets', 13447, { compilation: false }),
+    hit(3, 'Harry Potter and the Cursed Child', 3810, { compilation: false }),
+    hit(4, 'Harry Potter: The Complete Collection', 612, { compilation: true }),
+    hit(5, 'Harry Potter: The Prequel', 379, { compilation: false }),
+    hit(6, 'Harry Potter Boxed Set, Books 1-5', 113, { compilation: true }),
+    hit(7, 'The Harry Potter Collection #1-4', 69, { compilation: true }),
+    hit(8, 'Harry Potter y la camara secreta by J. K. Rowling', 8, { compilation: false }),
+    hit(9, 'Harry Potter i la pedra filosofal', 5, { compilation: false }),
+    hit(10, 'Harry Potter i Czara Ognia', 1, { compilation: false }),
+  ];
+
+  it('shows the books, not the box sets or the translations, for "Harry Potter"', async () => {
+    expect(await titles(harryPotter)).toEqual([
+      "Harry Potter and the Philosopher's Stone",
+      'Harry Potter and the Chamber of Secrets',
+      'Harry Potter and the Cursed Child',
+      'Harry Potter: The Prequel',
+    ]);
+  });
+
+  it('keeps Hardcover’s order, rather than sorting by readers', async () => {
+    expect(await titles([hit(1, 'First', 50), hit(2, 'Second', 5000), hit(3, 'Third', 800)])).toEqual(['First', 'Second', 'Third']);
+  });
+
+  describe('compilations', () => {
+    it('are dropped, however many readers they have', async () => {
+      expect(await titles([hit(1, 'A book', 100), hit(2, 'The Complete Collection', 90000, { compilation: true })])).toEqual(['A book']);
+    });
+
+    it('do not raise the bar for the real books, even with far more readers', async () => {
+      // If the box set counted, the floor would be 450 and this book would be hidden.
+      expect(await titles([hit(1, 'Box set', 90000, { compilation: true }), hit(2, 'The real book', 200)])).toEqual(['The real book']);
+    });
+
+    it('are only dropped when flagged true', async () => {
+      expect(await titles([hit(1, 'Plain', 10), hit(2, 'No flag', 10, { compilation: undefined }), hit(3, 'Not one', 10, { compilation: false })])).toEqual([
+        'Plain',
+        'No flag',
+        'Not one',
+      ]);
+    });
+
+    it('are all shown when nothing else was found, because an empty list helps nobody', async () => {
+      expect(await titles([hit(1, 'Boxed Set 1', 10, { compilation: true }), hit(2, 'Boxed Set 2', 20, { compilation: true })])).toEqual([
+        'Boxed Set 1',
+        'Boxed Set 2',
+      ]);
+    });
+  });
+
+  describe('the share of the top hit’s readers', () => {
+    it('keeps a hit with exactly half a percent of the top, and drops one with less', async () => {
+      // 1,000 readers at the top: the floor is 5.
+      expect(await titles([hit(1, 'Top', 1000), hit(2, 'At the floor', 5), hit(3, 'Below it', 4)])).toEqual(['Top', 'At the floor']);
+    });
+
+    it('keeps everything when the best match is obscure, so a rare title is still found', async () => {
+      expect(await titles([hit(1, 'Rare', 12), hit(2, 'Rarer', 3), hit(3, 'Rarest', 1)])).toEqual(['Rare', 'Rarer', 'Rarest']);
+    });
+
+    it('keeps hits with no readers at all when nobody has any', async () => {
+      expect(await titles([hit(1, 'New', 0), hit(2, 'Newer', 0)])).toEqual(['New', 'Newer']);
+    });
+
+    it('drops a hit with no readers once there is a book that has some', async () => {
+      expect(await titles([hit(1, 'Read', 400), hit(2, 'Unread', 0)])).toEqual(['Read']);
+    });
+
+    it('keeps a hit that does not say how many readers it has', async () => {
+      expect(await titles([hit(1, 'Top', 1000), hit(2, 'Unknown')])).toEqual(['Top', 'Unknown']);
+    });
+
+    it('measures against the best of the page, however few the caller asks for', async () => {
+      const hits = [hit(1, 'Top', 1000), hit(2, 'Second', 600), hit(3, 'Junk', 2)];
+      expect(await titles(hits, 1)).toEqual(['Top']);
+      expect(await titles(hits, 5)).toEqual(['Top', 'Second']);
+    });
+
+    it('lets one hit with an enormous readership hide the rest, as a share of the top should', async () => {
+      expect(await titles([hit(1, 'Huge', 1_000_000), hit(2, 'Popular', 4000), hit(3, 'Fine', 6000)])).toEqual(['Huge', 'Fine']);
+    });
+  });
+
+  it('still reports a hit it cannot use, rather than hiding it in the filter', async () => {
+    warn.mockClear();
+    expect(await titles([hit(1, 'Good', 100), { id: 2 }, null])).toEqual(['Good']);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows a single hit, as an ISBN search gives', async () => {
+    expect(await titles([hit(1, 'The one', 3)])).toEqual(['The one']);
+  });
+
+  it('shows nothing for no hits', async () => {
+    expect(await titles([])).toEqual([]);
   });
 });
 
@@ -208,14 +456,15 @@ describe('getById', () => {
 // The real SDK, with its own mock transport: these check what it actually
 // throws, which is what the mapping has to handle.
 describe('failures, through the real SDK client', () => {
-  const searchWith = (...responses: MockResponse[]) => {
+  const searchWith = (response: MockResponse) => {
     const client = new HardcoverClient({
       token: 'hc_pat_0123456789abcdef0123456789abcdef',
-      transport: new MockTransport(responses),
+      transport: new MockTransport(Array.from({ length: 8 }, () => response)),
       maxRetries: 0,
     });
     return createHardcoverSource({ token: 'unused', client, warn }).search('dog man');
   };
+  // (searchWith answers every request the same way: a search asks for two pages at once and may ask again without its filter.)
   const failure = (promise: Promise<unknown>) => promise.then(() => undefined, (e: unknown) => e);
 
   it('maps an invalid or expired token to unauthorized', async () => {
