@@ -34,6 +34,10 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn typecheck
       - run: yarn test
+      # The stack publishes packages/web/dist, so the real synth below needs it. This also
+      # proves the web app builds, which `yarn typecheck` and `yarn test` do not.
+      - name: Build the web app
+        run: yarn build:web
       # A real synth, including the esbuild bundle of the migration runner, with
       # no AWS access. The hosted-zone lookup is answered from a fake context
       # for a fake account, so nothing here touches the real account.

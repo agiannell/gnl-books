@@ -117,10 +117,51 @@ export class GnlBooksStack extends cdk.Stack {
 }`),
     });
 
+    // Security headers for the SPA. The sign-in session lives in localStorage (so the family tablet
+    // stays signed in), which a script injected into the page could read, so the main defence is that
+    // only this site's own scripts may run: no inline scripts, nothing from other hosts.
+    // - connect-src: the API (same origin) and the two Cognito hosts the sign-in library calls with
+    //   fetch (OIDC discovery and keys on cognito-idp, the token endpoint on the Hosted UI domain).
+    //   Going to the Hosted UI to sign in is a navigation, which connect-src does not govern.
+    // - style-src-attr: React sets a reader's colour with a style attribute.
+    // - img-src: Hardcover serves book covers from assets.hardcover.app.
+    const contentSecurityPolicy = [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self'",
+      "style-src-attr 'unsafe-inline'",
+      "img-src 'self' https://assets.hardcover.app data:",
+      "font-src 'self'",
+      `connect-src 'self' https://cognito-idp.${this.region}.amazonaws.com https://${AUTH_DOMAIN_PREFIX}.auth.${this.region}.amazoncognito.com`,
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join('; ');
+    const siteHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SiteHeaders', {
+      securityHeadersBehavior: {
+        contentSecurityPolicy: { contentSecurityPolicy, override: true },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+        referrerPolicy: {
+          referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN,
+          override: true,
+        },
+        // Only this host: gnlfamily.com has other sites that have not agreed to HTTPS-only.
+        strictTransportSecurity: { accessControlMaxAge: cdk.Duration.days(365), includeSubdomains: false, override: true },
+      },
+      customHeadersBehavior: {
+        customHeaders: [
+          { header: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()', override: true },
+        ],
+      },
+    });
+
     const distribution = new cloudfront.Distribution(this, 'SiteDistribution', {
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(siteBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        responseHeadersPolicy: siteHeaders,
         functionAssociations: [
           { function: spaRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
         ],
@@ -142,13 +183,33 @@ export class GnlBooksStack extends cdk.Stack {
       target: alias,
     });
 
-    // Placeholder until the SPA build replaces it (build step 6).
-    new s3deploy.BucketDeployment(this, 'PlaceholderDeployment', {
-      sources: [s3deploy.Source.asset(path.join(__dirname, '..', 'placeholder'))],
+    // The built SPA (`yarn build:web` makes packages/web/dist; a deploy without it fails here, which
+    // is better than quietly publishing nothing). The `webDist` context swaps in another folder, so the
+    // tests do not need a real build.
+    const webDist = this.node.tryGetContext('webDist') ?? path.join(__dirname, '..', '..', 'packages', 'web', 'dist');
+    // Two deployments, because the files want different caching. Everything under assets/ has a hash
+    // in its name, so it never changes and can be kept for a year. index.html names those files, so
+    // the browser must check it every time, or a reload after a deploy could ask for files that are gone.
+    const assetsDeployment = new s3deploy.BucketDeployment(this, 'WebAssetsDeployment', {
+      sources: [s3deploy.Source.asset(webDist)],
       destinationBucket: siteBucket,
+      exclude: ['*'],
+      include: ['assets/*'],
+      // Old hashed files are left in place (a tab still open on the last version may need them).
+      prune: false,
+      cacheControl: [s3deploy.CacheControl.fromString('public, max-age=31536000, immutable')],
+    });
+    const siteDeployment = new s3deploy.BucketDeployment(this, 'WebDeployment', {
+      sources: [s3deploy.Source.asset(webDist)],
+      destinationBucket: siteBucket,
+      // Excluded files are also left alone when pruning, so the hashed files survive.
+      exclude: ['assets/*'],
+      cacheControl: [s3deploy.CacheControl.noCache()],
       distribution,
       distributionPaths: ['/*'],
     });
+    // The new index.html goes live only after the files it names are there.
+    siteDeployment.node.addDependency(assetsDeployment);
 
     // Auth. Adults sign in here; kids are profiles, not Cognito users.
     this.userPool = new cognito.UserPool(this, 'UserPool', {
