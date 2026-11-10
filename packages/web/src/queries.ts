@@ -16,8 +16,19 @@ export const FAMILY = gql`
         id
         name
         emoji
-        isParent
+        color
       }
+    }
+  }
+`;
+
+export const PROFILE = gql`
+  query ProfilePage($id: ID!) {
+    profile(id: $id) {
+      id
+      name
+      emoji
+      color
     }
   }
 `;
@@ -34,9 +45,20 @@ export interface MeData {
   me: { familyId: string | null };
 }
 
+/** A reader, as the picker and the profile page show them. */
+export interface ProfileSummary {
+  id: string;
+  name: string;
+  emoji: string | null;
+  /** `#rrggbb`; the API only accepts that shape, so it is safe in a style. */
+  color: string | null;
+}
+
 export interface FamilyData {
-  family: {
-    name: string;
-    profiles: { id: string; name: string; emoji: string | null; isParent: boolean }[];
-  };
+  family: { name: string; profiles: ProfileSummary[] };
+}
+
+export interface ProfileData {
+  /** Null for an id that is not one of this family's profiles. */
+  profile: ProfileSummary | null;
 }

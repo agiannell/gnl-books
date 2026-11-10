@@ -11,3 +11,26 @@ body {
 main {
   padding: 1rem;
 }
+
+/* "Who's reading?": big, touch-sized targets that wrap to the screen. */
+.profiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.profile {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 4.5rem;
+  padding: 0 1rem;
+  border: 0.25rem solid currentColor;
+  border-radius: 1rem;
+  font-size: 1.25rem;
+  text-decoration: none;
+  color: inherit;
+}
