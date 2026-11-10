@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- An open book, white on a blue rounded square: the square keeps it readable on light and dark tab bars. -->
-  <rect width="32" height="32" rx="7" fill="#2f5fb3"/>
+  <!-- An open book, white on the app's orange rounded square: the square keeps it readable on light and dark tab bars. -->
+  <rect width="32" height="32" rx="7" fill="#f76b15"/>
   <path fill="#fff" d="M16 9.5c-2.2-1.6-5.4-2.1-9-1.5v14c3.6-.6 6.8-.1 9 1.5 2.2-1.6 5.4-2.1 9-1.5V8c-3.6-.6-6.8-.1-9 1.5z"/>
-  <path d="M16 9.5v14" stroke="#2f5fb3" stroke-width="1.4" fill="none"/>
+  <path d="M16 9.5v14" stroke="#f76b15" stroke-width="1.4" fill="none"/>
 </svg>

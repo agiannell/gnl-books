@@ -27,6 +27,7 @@ const hit = (sourceId: string | null, over: Record<string, unknown> = {}) => ({
   authors: ['Ann Lee'],
   pages: 200,
   releaseYear: 2019,
+  coverUrl: null,
   seriesName: null,
   seriesPosition: null,
   ...over,
@@ -54,6 +55,19 @@ describe('SearchPage', () => {
     expect(screen.getByText('Dog Man #1')).toBeTruthy();
     expect(screen.getByText('2019 · 200 pages')).toBeTruthy();
     expect(api.variables[0]).toEqual({ query: 'dog man' });
+  });
+
+  it('shows each hit’s cover, and a plain tile for a hit without one', async () => {
+    renderAt('/p/p-2/search', {
+      SearchBooks: results(
+        hit('s-1', { title: 'With cover', coverUrl: 'https://assets.hardcover.app/books/1/cover.jpg' }),
+        hit('s-2', { title: 'No cover', coverUrl: null }),
+      ),
+    });
+    await search('covers');
+    const row = async (title: string) => (await screen.findByText(title)).closest('li')!;
+    expect((await row('With cover')).querySelector('img')!.getAttribute('src')).toBe('https://assets.hardcover.app/books/1/cover.jpg');
+    expect((await row('No cover')).querySelector('img')).toBeNull();
   });
 
   it('says nothing about results before a search, and says so when there are none', async () => {
@@ -181,7 +195,7 @@ describe('SearchPage', () => {
               rating: null,
               dateRead: null,
               currentPage: null,
-              book: { __typename: 'Book', id: 'book-1', title: 'Title s-1', authors: ['Ann Lee'], pages: 200, seriesName: null, seriesPosition: null },
+              book: { __typename: 'Book', id: 'book-1', title: 'Title s-1', authors: ['Ann Lee'], pages: 200, coverUrl: null, seriesName: null, seriesPosition: null },
             },
           ],
         },

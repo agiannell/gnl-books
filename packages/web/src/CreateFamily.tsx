@@ -1,7 +1,9 @@
 import { CombinedGraphQLErrors } from '@apollo/client/errors';
 import { useApolloClient, useMutation } from '@apollo/client/react';
+import { Button, Card, Flex, Heading, Text, TextField } from '@radix-ui/themes';
 import { useState, type FormEvent } from 'react';
 import { CREATE_FAMILY, ME } from './queries.ts';
+import { Alert, Field } from './ui.tsx';
 
 // The server enforces all of these too; checking here only saves a round trip.
 // The inputs' maxLength stops anything longer being typed, so only the lower
@@ -51,54 +53,62 @@ export default function CreateFamily() {
   };
 
   return (
-    <form onSubmit={(event) => void submit(event)}>
-      <h1>Set up your family</h1>
-      <p>
-        The parent PIN protects parent-only actions, like deleting a profile. Choose 4 to 8 digits and share it only
-        with the other adults.
-      </p>
-      <p>
-        <label>
-          Family name
-          <input value={familyName} onChange={(e) => setFamilyName(e.target.value)} maxLength={MAX_NAME} autoComplete="off" />
-        </label>
-      </p>
-      <p>
-        <label>
-          Your name
-          <input value={parentName} onChange={(e) => setParentName(e.target.value)} maxLength={MAX_NAME} autoComplete="off" />
-        </label>
-      </p>
-      <p>
-        <label>
-          Parent PIN
-          <input
-            type="password"
-            inputMode="numeric"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            maxLength={MAX_PIN}
-            autoComplete="off"
-          />
-        </label>
-      </p>
-      <p>
-        <label>
-          Parent PIN again
-          <input
-            type="password"
-            inputMode="numeric"
-            value={pinAgain}
-            onChange={(e) => setPinAgain(e.target.value)}
-            maxLength={MAX_PIN}
-            autoComplete="off"
-          />
-        </label>
-      </p>
-      {(invalid ?? error) && <p role="alert">{invalid ?? error?.message}</p>}
-      <button type="submit" disabled={loading}>
-        {loading ? 'Creating…' : 'Create family'}
-      </button>
-    </form>
+    <Card size="4" className="centered-card">
+      <form onSubmit={(event) => void submit(event)}>
+        <Flex direction="column" gap="4">
+          <Heading as="h1" size="7">
+            Set up your family
+          </Heading>
+          <Text color="gray">
+            The parent PIN protects parent-only actions, like deleting a profile. Choose 4 to 8 digits and share it only
+            with the other adults.
+          </Text>
+          <Field label="Family name">
+            <TextField.Root
+              size="3"
+              value={familyName}
+              onChange={(e) => setFamilyName(e.target.value)}
+              maxLength={MAX_NAME}
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Your name">
+            <TextField.Root
+              size="3"
+              value={parentName}
+              onChange={(e) => setParentName(e.target.value)}
+              maxLength={MAX_NAME}
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Parent PIN">
+            <TextField.Root
+              size="3"
+              type="password"
+              inputMode="numeric"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              maxLength={MAX_PIN}
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Parent PIN again">
+            <TextField.Root
+              size="3"
+              type="password"
+              inputMode="numeric"
+              value={pinAgain}
+              onChange={(e) => setPinAgain(e.target.value)}
+              maxLength={MAX_PIN}
+              autoComplete="off"
+            />
+          </Field>
+          {(invalid ?? error) && <Alert>{invalid ?? error?.message}</Alert>}
+          <Button type="submit" size="3" disabled={loading}>
+            {loading ? 'Creating…' : 'Create family'}
+          </Button>
+        </Flex>
+      </form>
+    </Card>
   );
 }

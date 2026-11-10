@@ -1,7 +1,10 @@
 import { useApolloClient, useQuery } from '@apollo/client/react';
+import { DownloadIcon } from '@radix-ui/react-icons';
+import { Button, Text } from '@radix-ui/themes';
 import { useState } from 'react';
 import { downloadTextFile, exportFileName } from './download.ts';
 import { EXPORT_GOODREADS_CSV, SETTINGS_PROFILES, type SettingsProfilesData } from './queries.ts';
+import { Alert, Loading, Panel, Status } from './ui.tsx';
 
 /** A reader's whole shelf as a file Goodreads can import: for a child who grows up and gets their own account. */
 export default function ExportSection() {
@@ -33,24 +36,30 @@ export default function ExportSection() {
   }
 
   return (
-    <section aria-labelledby="export-heading">
-      <h2 id="export-heading">Export books</h2>
-      <p>Save a reader’s books as a file that Goodreads can import.</p>
-      {error && <p role="alert">Something went wrong: {error.message}</p>}
-      {!error && (loading || !data) && <p>Loading…</p>}
+    <Panel id="export-heading" title="Export books">
+      <Text color="gray">Save a reader’s books as a file that Goodreads can import.</Text>
+      {error && <Alert>Something went wrong: {error.message}</Alert>}
+      {!error && (loading || !data) && <Loading />}
       {!error && data && (
-        <ul>
+        <ul className="card-list">
           {data.family.profiles.map((profile) => (
             <li key={profile.id}>
-              <button type="button" disabled={busyId !== null} onClick={() => void exportFor(profile.id, profile.name)}>
+              <Button
+                type="button"
+                variant="soft"
+                size="3"
+                disabled={busyId !== null}
+                onClick={() => void exportFor(profile.id, profile.name)}
+              >
+                <DownloadIcon aria-hidden="true" />
                 Download books for {profile.name}
-              </button>
+              </Button>
             </li>
           ))}
         </ul>
       )}
-      {message?.kind === 'done' && <p role="status">{message.text}</p>}
-      {message?.kind === 'failed' && <p role="alert">{message.text}</p>}
-    </section>
+      {message?.kind === 'done' && <Status>{message.text}</Status>}
+      {message?.kind === 'failed' && <Alert>{message.text}</Alert>}
+    </Panel>
   );
 }

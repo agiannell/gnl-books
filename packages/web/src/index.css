@@ -1,36 +1,227 @@
-/* The template's demo styling is gone; the real design comes with the first screens. */
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
+/* The look comes from Radix Themes (see theme.tsx); this file is what it does not cover. */
+
+/* A rounded, friendly typeface for everything. Self-hosted by @fontsource, so the content security
+   policy needs nothing beyond 'self'. */
+.radix-themes {
+  --default-font-family: 'Nunito Variable', system-ui, sans-serif;
+  --heading-font-family: 'Nunito Variable', system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+/* In light mode the page is warm cream and the cards are white on it; dark mode keeps Radix's own. */
+.radix-themes:not(.dark):not(.dark-theme) {
+  --color-background: var(--sand-2);
 }
 
 body {
   margin: 0;
 }
 
-main {
-  padding: 1rem;
+/* The bar across the top: the name on the left, signing out on the right. */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-panel-solid);
+  border-bottom: 1px solid var(--gray-a5);
 }
 
-/* "Who's reading?": big, touch-sized targets that wrap to the screen. */
-.profiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
-  gap: 1rem;
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--accent-11);
+  font-weight: 800;
+  font-size: var(--font-size-4);
+  text-decoration: none;
+}
+
+/* A label above its control. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Lists that sit in a grid of cards: no bullets, wrapping to the width of the screen. */
+.card-grid,
+.card-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-
-.profile {
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+  gap: var(--space-4);
+}
+.card-list {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 4.5rem;
-  padding: 0 1rem;
-  border: 0.25rem solid currentColor;
-  border-radius: 1rem;
-  font-size: 1.25rem;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* "Who's reading?": one big tap target per reader, ringed in their own colour. */
+.reader-card {
+  --reader-color: var(--accent-9);
+  display: block;
+  min-height: 7rem;
+  border: 3px solid var(--reader-color);
   text-decoration: none;
   color: inherit;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.reader-card:hover,
+.reader-card:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-4);
+}
+.reader-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 4rem;
+  height: 4rem;
+  flex: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--reader-color) 22%, transparent);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.reader-avatar-sm {
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 1.25rem;
+}
+
+/* Book covers: a fixed 2:3 box so the page does not jump as they load. */
+.cover {
+  flex: none;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius-3);
+  overflow: hidden;
+  background: var(--accent-a3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-2);
+}
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cover-placeholder {
+  width: 40%;
+  height: 40%;
+  color: var(--accent-9);
+}
+.cover-sm {
+  width: 3.5rem;
+}
+.cover-md {
+  width: 5.5rem;
+}
+.cover-lg {
+  width: min(11rem, 40vw);
+}
+
+/* One book in a list: cover on the left, the words beside it. */
+.book-row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+.book-row > .book-body {
+  min-width: 0;
+  flex: 1;
+}
+.book-title {
+  font-weight: 800;
+  font-size: var(--font-size-4);
+  line-height: 1.25;
+  color: var(--gray-12);
+  text-decoration: none;
+}
+/* Stretch the title's link over the whole card so any tap on the card opens the book. */
+.book-title::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.book-title:hover {
+  text-decoration: underline;
+}
+
+/* The page's own heading with the reader's face beside it. */
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Native progress bars, drawn to match. */
+progress {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 0.75rem;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--gray-a4);
+  accent-color: var(--accent-9);
+}
+progress::-webkit-progress-bar {
+  background: var(--gray-a4);
+}
+progress::-webkit-progress-value {
+  background: var(--accent-9);
+  border-radius: 999px;
+}
+progress::-moz-progress-bar {
+  background: var(--accent-9);
+  border-radius: 999px;
+}
+
+/* Stars. */
+.stars {
+  color: var(--amber-9);
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+.star-button {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+/* Native selects and checkboxes, dressed like the Radix fields beside them. */
+select.native {
+  width: 100%;
+  min-height: var(--space-7);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--gray-a7);
+  border-radius: var(--radius-3);
+  background: var(--color-surface);
+  color: var(--gray-12);
+  font: inherit;
+}
+select.native:focus-visible {
+  outline: 2px solid var(--focus-8);
+  outline-offset: -1px;
+}
+input[type='checkbox'] {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--accent-9);
+}
+
+/* A box that holds a single message in the middle of the screen: sign in, parents only. */
+.centered-card {
+  max-width: 26rem;
+  margin: var(--space-6) auto;
 }

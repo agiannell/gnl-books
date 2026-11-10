@@ -1,5 +1,8 @@
+import { LockClosedIcon, LockOpen1Icon } from '@radix-ui/react-icons';
+import { Button, Card, Flex, Heading, Text, TextField } from '@radix-ui/themes';
 import { type FormEvent, type ReactNode, useState } from 'react';
 import { useParentSession } from './ParentSessionProvider.tsx';
+import { Alert, Field } from './ui.tsx';
 
 // The PIN is 4 to 8 digits (packages/core/src/pin.ts). The API does not count a malformed
 // PIN as a wrong guess, but checking here saves the round trip.
@@ -24,14 +27,15 @@ export default function ParentGate({ children }: { children: ReactNode }) {
 
   if (unlocked) {
     return (
-      <>
-        <p>
-          <button type="button" onClick={lock}>
+      <Flex direction="column" gap="5">
+        <Flex justify="end">
+          <Button type="button" variant="soft" color="gray" onClick={lock}>
+            <LockClosedIcon aria-hidden="true" />
             Lock
-          </button>
-        </p>
+          </Button>
+        </Flex>
         {children}
-      </>
+      </Flex>
     );
   }
 
@@ -60,25 +64,33 @@ export default function ParentGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <form onSubmit={(event) => void submit(event)}>
-      <h1>Parents only</h1>
-      <p>
-        <label>
-          Parent PIN{' '}
-          <input
-            type="password"
-            inputMode="numeric"
-            autoComplete="off"
-            maxLength={8}
-            value={pin}
-            onChange={(event) => setPin(event.target.value)}
-          />
-        </label>
-      </p>
-      <button type="submit" disabled={busy}>
-        Unlock
-      </button>
-      {message && <p role="alert">{message}</p>}
-    </form>
+    <Card size="4" className="centered-card">
+      <form onSubmit={(event) => void submit(event)}>
+        <Flex direction="column" gap="4" align="stretch">
+          <Flex align="center" gap="3">
+            <LockOpen1Icon width={28} height={28} color="var(--accent-9)" aria-hidden="true" />
+            <Heading as="h1" size="6">
+              Parents only
+            </Heading>
+          </Flex>
+          <Text color="gray">Enter the parent PIN to change settings.</Text>
+          <Field label="Parent PIN">
+            <TextField.Root
+              size="3"
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={8}
+              value={pin}
+              onChange={(event) => setPin(event.target.value)}
+            />
+          </Field>
+          <Button type="submit" size="3" disabled={busy}>
+            Unlock
+          </Button>
+          {message && <Alert>{message}</Alert>}
+        </Flex>
+      </form>
+    </Card>
   );
 }

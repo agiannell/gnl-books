@@ -49,6 +49,7 @@ export const PROFILE = gql`
           title
           authors
           pages
+          coverUrl
           seriesName
           seriesPosition
         }
@@ -83,6 +84,7 @@ export const BOOK_PAGE = gql`
           authors
           pages
           releaseYear
+          coverUrl
           seriesName
           seriesPosition
           description
@@ -247,6 +249,7 @@ export const SEARCH_BOOKS = gql`
       authors
       pages
       releaseYear
+      coverUrl
       seriesName
       seriesPosition
     }
@@ -330,6 +333,8 @@ export interface ShelfItem {
     title: string;
     authors: string[];
     pages: number | null;
+    /** An https address on Hardcover's host, or null. */
+    coverUrl: string | null;
     seriesName: string | null;
     seriesPosition: number | null;
   };
@@ -350,6 +355,7 @@ export interface BookPageEntry {
     authors: string[];
     pages: number | null;
     releaseYear: number | null;
+    coverUrl: string | null;
     seriesName: string | null;
     seriesPosition: number | null;
     description: string | null;
@@ -367,6 +373,7 @@ export interface SearchHit {
   authors: string[];
   pages: number | null;
   releaseYear: number | null;
+  coverUrl: string | null;
   seriesName: string | null;
   seriesPosition: number | null;
 }

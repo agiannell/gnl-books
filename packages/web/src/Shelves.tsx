@@ -1,4 +1,6 @@
+import { Card, Flex, Heading, Text } from '@radix-ui/themes';
 import { Link } from 'react-router';
+import Cover from './Cover.tsx';
 import { formatDate, seriesLabel, stars } from './format.ts';
 import type { ShelfItem, ShelfName } from './queries.ts';
 
@@ -12,41 +14,70 @@ const SECTIONS: { shelf: ShelfName; title: string; empty: string }[] = [
 function Entry({ item, profileId }: { item: ShelfItem; profileId: string }) {
   const { book } = item;
   const seriesText = seriesLabel(book);
+  const reading = item.shelf === 'CURRENTLY_READING' && item.currentPage !== null;
   return (
     <li>
-      <strong>
-        <Link to={`/p/${profileId}/book/${book.id}`}>{book.title}</Link>
-      </strong>
-      <div>by {book.authors.join(', ')}</div>
-      {seriesText && <div>{seriesText}</div>}
-      {item.shelf === 'CURRENTLY_READING' && item.currentPage !== null && (
-        <div>{book.pages ? `Page ${item.currentPage} of ${book.pages}` : `Page ${item.currentPage}`}</div>
-      )}
-      {item.shelf === 'READ' && item.rating !== null && (
-        <div role="img" aria-label={`${item.rating} out of 5 stars`}>
-          {stars(item.rating)}
+      <Card size="2">
+        <div className="book-row">
+          <Cover url={book.coverUrl} />
+          <div className="book-body">
+            <Flex direction="column" gap="1">
+              {/* The link's own area is stretched over the whole card (see index.css), so the card is the tap target. */}
+              <Link to={`/p/${profileId}/book/${book.id}`} className="book-title">
+                {book.title}
+              </Link>
+              <Text as="div" size="2" color="gray">
+                by {book.authors.join(', ')}
+              </Text>
+              {seriesText && (
+                <Text as="div" size="2" color="gray">
+                  {seriesText}
+                </Text>
+              )}
+              {reading && (
+                <>
+                  <Text as="div" size="2">
+                    {book.pages ? `Page ${item.currentPage} of ${book.pages}` : `Page ${item.currentPage}`}
+                  </Text>
+                  {/* The words above say it; the bar is only for the eye. */}
+                  {book.pages ? <progress aria-hidden="true" value={Math.min(item.currentPage!, book.pages)} max={book.pages} /> : null}
+                </>
+              )}
+              {item.shelf === 'READ' && item.rating !== null && (
+                <div role="img" aria-label={`${item.rating} out of 5 stars`} className="stars">
+                  {stars(item.rating)}
+                </div>
+              )}
+              {item.shelf === 'READ' && item.dateRead && (
+                <Text as="div" size="2" color="gray">
+                  Finished {formatDate(item.dateRead)}
+                </Text>
+              )}
+            </Flex>
+          </div>
         </div>
-      )}
-      {item.shelf === 'READ' && item.dateRead && <div>Finished {formatDate(item.dateRead)}</div>}
+      </Card>
     </li>
   );
 }
 
-/** A reader's books in three lists. Text only for now; covers wait for the site's content security policy. */
+/** A reader's books in three lists, each book with its cover. */
 export default function Shelves({ items, profileId }: { items: ShelfItem[]; profileId: string }) {
   return (
-    <>
+    <Flex direction="column" gap="6">
       {SECTIONS.map(({ shelf, title, empty }) => {
         const entries = items.filter((item) => item.shelf === shelf);
         return (
           <section key={shelf} aria-labelledby={`shelf-${shelf}`}>
-            <h2 id={`shelf-${shelf}`}>
+            <Heading as="h2" size="5" mb="3" id={`shelf-${shelf}`}>
               {title} ({entries.length})
-            </h2>
+            </Heading>
             {entries.length === 0 ? (
-              <p>{empty}</p>
+              <Text as="p" color="gray">
+                {empty}
+              </Text>
             ) : (
-              <ul>
+              <ul className="card-grid">
                 {entries.map((item) => (
                   <Entry key={item.id} item={item} profileId={profileId} />
                 ))}
@@ -55,6 +86,6 @@ export default function Shelves({ items, profileId }: { items: ShelfItem[]; prof
           </section>
         );
       })}
-    </>
+    </Flex>
   );
 }

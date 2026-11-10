@@ -21,7 +21,7 @@ const item = (over: Partial<Omit<ShelfItem, 'book'>> & { book?: Partial<ShelfIte
     rating: null,
     dateRead: null,
     currentPage: null,
-    book: { id: `b-${n}`, title: `Book ${n}`, authors: ['Ann Lee'], pages: null, seriesName: null, seriesPosition: null, ...book },
+    book: { id: `b-${n}`, title: `Book ${n}`, authors: ['Ann Lee'], pages: null, coverUrl: null, seriesName: null, seriesPosition: null, ...book },
     ...rest,
   };
 };
@@ -29,6 +29,46 @@ const item = (over: Partial<Omit<ShelfItem, 'book'>> & { book?: Partial<ShelfIte
 const section = (title: RegExp) => within(screen.getByRole('region', { name: title }));
 
 describe('Shelves', () => {
+  it('shows each book’s cover from Hardcover, and a plain tile for a book without one', () => {
+    render(
+      <Shelves
+        items={[
+          item({ book: { title: 'With cover', coverUrl: 'https://assets.hardcover.app/books/1/cover.jpg' } }),
+          item({ book: { title: 'No cover', coverUrl: null } }),
+          item({ book: { title: 'Insecure cover', coverUrl: 'http://assets.hardcover.app/books/2/cover.jpg' } }),
+        ]}
+      />,
+    );
+    const row = (title: string) => screen.getByRole('link', { name: title }).closest('li')!;
+    expect(row('With cover').querySelector('img')!.getAttribute('src')).toBe('https://assets.hardcover.app/books/1/cover.jpg');
+    expect(row('No cover').querySelector('img')).toBeNull();
+    expect(row('No cover').querySelector('.cover-placeholder')).not.toBeNull();
+    expect(row('Insecure cover').querySelector('img')).toBeNull();
+  });
+
+  it('draws a bar for a book being read whose length is known, for the eye only', () => {
+    render(<Shelves items={[item({ shelf: 'CURRENTLY_READING', currentPage: 120, book: { pages: 240 } })]} />);
+    const bar = document.querySelector('progress')!;
+    expect([bar.value, bar.max]).toEqual([120, 240]);
+    // The words say it ("Page 120 of 240"), so a screen reader is not told twice.
+    expect(bar.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  it('draws no bar when the length is unknown, and never past full', () => {
+    render(
+      <Shelves
+        items={[
+          item({ shelf: 'CURRENTLY_READING', currentPage: 30, book: { pages: null } }),
+          item({ shelf: 'CURRENTLY_READING', currentPage: 999, book: { pages: 240 } }),
+        ]}
+      />,
+    );
+    const bars = [...document.querySelectorAll('progress')];
+    expect(bars).toHaveLength(1);
+    expect([bars[0]!.value, bars[0]!.max]).toEqual([240, 240]);
+  });
+
   it('links each title to that book’s page for the reader', () => {
     render(<Shelves items={[item({ book: { id: 'b-77', title: 'Dog Man' } })]} />);
     expect(screen.getByRole('link', { name: 'Dog Man' }).getAttribute('href')).toBe('/p/p-2/book/b-77');
@@ -54,7 +94,7 @@ describe('Shelves', () => {
         ]}
       />,
     );
-    const titles = (name: RegExp) => section(name).queryAllByRole('listitem').map((li) => li.querySelector('strong')?.textContent);
+    const titles = (name: RegExp) => section(name).queryAllByRole('listitem').map((li) => li.querySelector('a')?.textContent);
     expect(titles(/Reading now/)).toEqual(['Going One']);
     expect(titles(/Want to read/)).toEqual(['Waiting One', 'Waiting Two']);
     expect(titles(/^Read \(/)).toEqual(['Finished One']);

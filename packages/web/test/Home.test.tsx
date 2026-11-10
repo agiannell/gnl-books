@@ -61,8 +61,8 @@ describe('Home', () => {
       ]),
     });
     const sam = await screen.findByRole('link', { name: 'Sam' });
-    // A browser normalizes the colour to rgb(); happy-dom keeps it as written.
-    expect(sam.style.borderColor).toMatch(/^(#3366cc|rgb\(51, 102, 204\))$/i);
+    // The card's ring reads this one variable; without one it uses the theme's own colour.
+    expect(sam.style.getPropertyValue('--reader-color')).toMatch(/^(#3366cc|rgb\(51, 102, 204\))$/i);
     expect(screen.getByRole('link', { name: 'Pat' }).getAttribute('style')).toBeNull();
   });
 

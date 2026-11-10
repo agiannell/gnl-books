@@ -1,3 +1,4 @@
+import { Button, Flex, Heading } from '@radix-ui/themes';
 import { Link } from 'react-router';
 import ExportSection from './ExportSection.tsx';
 import GoalsSection from './GoalsSection.tsx';
@@ -8,17 +9,21 @@ import TimezoneSection from './TimezoneSection.tsx';
 /** Everything only a parent may change. Behind the PIN; the sections arrive one at a time. */
 export default function SettingsPage() {
   return (
-    <>
+    <Flex direction="column" gap="5">
       <ParentGate>
-        <h1>Settings</h1>
+        <Heading as="h1" size={{ initial: '7', sm: '8' }}>
+          Settings
+        </Heading>
         <ProfilesSection />
         <GoalsSection />
         <TimezoneSection />
         <ExportSection />
       </ParentGate>
-      <p>
-        <Link to="/">Back to who’s reading</Link>
-      </p>
-    </>
+      <Flex>
+        <Button asChild variant="ghost" color="gray">
+          <Link to="/">Back to who’s reading</Link>
+        </Button>
+      </Flex>
+    </Flex>
   );
 }

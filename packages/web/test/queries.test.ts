@@ -1,7 +1,15 @@
 import { gql } from '@apollo/client';
-import { type DocumentNode, Kind, type SelectionSetNode } from 'graphql';
+import { type DocumentNode, Kind, type SelectionSetNode, visit } from 'graphql';
 import { describe, expect, it } from 'vitest';
-import { FAMILY, SETTINGS_GOALS, SETTINGS_PROFILES, SETTINGS_TIMEZONE } from '../src/queries.ts';
+import {
+  BOOK_PAGE,
+  FAMILY,
+  PROFILE,
+  SEARCH_BOOKS,
+  SETTINGS_GOALS,
+  SETTINGS_PROFILES,
+  SETTINGS_TIMEZONE,
+} from '../src/queries.ts';
 
 // The fake API in the other tests answers with an `id` whether or not a query asked for it, so
 // they cannot see a query that forgot it. A real server sends only what was asked for.
@@ -14,6 +22,29 @@ const familyFields = (doc: DocumentNode) => {
   const family = fieldsOf(operation.selectionSet).find((f) => f.name.value === 'family');
   return fieldsOf(family?.selectionSet).map((f) => f.name.value);
 };
+
+/** Every field name a document asks for, anywhere in it. */
+const fieldNames = (doc: DocumentNode) => {
+  const names = new Set<string>();
+  visit(doc, { Field: (node) => void names.add(node.name.value) });
+  return names;
+};
+
+// The fake API in the other tests answers with a `coverUrl` whether or not a query asked for it, so a
+// query that forgot it would still show covers in the tests and none in the real app.
+describe('the queries that show books', () => {
+  it.each([
+    ['ProfilePage', PROFILE],
+    ['BookPage', BOOK_PAGE],
+    ['SearchBooks', SEARCH_BOOKS],
+  ])('%s asks for the cover', (_name, doc) => {
+    expect(fieldNames(doc).has('coverUrl')).toBe(true);
+  });
+
+  it('sees a query that leaves it out', () => {
+    expect(fieldNames(FAMILY).has('coverUrl')).toBe(false);
+  });
+});
 
 describe('the queries that read the family', () => {
   // With the id, Apollo keeps the family as one object and merges what each query reads. Without it a

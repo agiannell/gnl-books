@@ -35,6 +35,7 @@ const entry = (id: string, shelf: string, over: Record<string, unknown> = {}) =>
     title: `Title ${id}`,
     authors: ['Ann Lee'],
     pages: 200,
+    coverUrl: null,
     seriesName: null,
     seriesPosition: null,
   },
