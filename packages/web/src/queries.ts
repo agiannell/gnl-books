@@ -29,6 +29,26 @@ export const PROFILE = gql`
       name
       emoji
       color
+      goal {
+        year
+        target
+        booksRead
+      }
+      shelf {
+        id
+        shelf
+        rating
+        dateRead
+        currentPage
+        book {
+          id
+          title
+          authors
+          pages
+          seriesName
+          seriesPosition
+        }
+      }
     }
   }
 `;
@@ -58,7 +78,34 @@ export interface FamilyData {
   family: { name: string; profiles: ProfileSummary[] };
 }
 
+export type ShelfName = 'TO_READ' | 'CURRENTLY_READING' | 'READ';
+
+/** One book on a reader's shelf, as the shelves list it. */
+export interface ShelfItem {
+  id: string;
+  shelf: ShelfName;
+  rating: number | null;
+  /** `YYYY-MM-DD`. */
+  dateRead: string | null;
+  currentPage: number | null;
+  book: {
+    id: string;
+    title: string;
+    authors: string[];
+    pages: number | null;
+    seriesName: string | null;
+    seriesPosition: number | null;
+  };
+}
+
+export interface GoalSummary {
+  year: number;
+  target: number;
+  /** Books finished that year. */
+  booksRead: number;
+}
+
 export interface ProfileData {
   /** Null for an id that is not one of this family's profiles. */
-  profile: ProfileSummary | null;
+  profile: (ProfileSummary & { goal: GoalSummary | null; shelf: ShelfItem[] }) | null;
 }
