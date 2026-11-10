@@ -33,7 +33,7 @@ DATABASE_URL="postgres://admin:${E}@${H}:5432/postgres?sslmode=verify-full" yarn
 
 `jsonb` columns (`books.authors`, `shelf_entries.tags`) are written as `JSON.stringify(...)` text, because `pg` would send a JS array as a Postgres array, which `jsonb` rejects. Reads come back already parsed. The types encode this.
 
-Run tests from the repo root only. Projects are defined inline in the root `vitest.config.mts` (`infra` has the CDK cleanup setup file; `packages` is node-only). Running Vitest from inside a workspace finds no config and silently drops the setup file and timeout, so workspaces have no `test` script. Every workspace needs a `typecheck` script, or the root `yarn workspaces run typecheck` errors. `vitest run` exits 1 when a project has no tests yet. There is no lint script yet.
+Run tests from the repo root only. Projects are defined inline in the root `vitest.config.mts` (`infra` has the CDK cleanup setup file; `packages` is node-only and skips `packages/web`; `web` runs the SPA's tests in happy-dom with Testing Library, because jsdom 31 needs Node 24.15 or later and the author's machine has 24.12). `packages/web/test/auth.live.test.ts` hits the real Cognito discovery endpoint and only runs with `VITE_LIVE_COGNITO=1`. Running Vitest from inside a workspace finds no config and silently drops the setup file and timeout, so workspaces have no `test` script. Every workspace needs a `typecheck` script, or the root `yarn workspaces run typecheck` errors. `vitest run` exits 1 when a project has no tests yet. There is no lint script yet.
 
 ## Architecture (big picture)
 
