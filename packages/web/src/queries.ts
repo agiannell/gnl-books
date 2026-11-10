@@ -173,6 +173,13 @@ export const REMOVE_GOAL = gql`
   }
 `;
 
+// A mutation, not a query: it is parent-only and the answer is a whole file, which has no place in the cache.
+export const EXPORT_GOODREADS_CSV = gql`
+  mutation ExportGoodreadsCsv($profileId: ID!) {
+    exportGoodreadsCsv(profileId: $profileId)
+  }
+`;
+
 export const CREATE_PROFILE = gql`
   mutation CreateProfile($input: CreateProfileInput!) {
     createProfile(input: $input) {

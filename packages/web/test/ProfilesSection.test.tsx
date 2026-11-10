@@ -277,7 +277,10 @@ describe('the readers section of the settings', () => {
 
   it('shows the API’s message when the readers cannot be loaded', async () => {
     renderAt('/settings', { SettingsProfiles: failure('Not authorized') });
-    expect((await screen.findByRole('alert')).textContent).toContain('Not authorized');
+    // The export section reads the same readers and shows the same error, so there are two.
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.length).toBeGreaterThanOrEqual(1);
+    expect(alerts.every((alert) => alert.textContent?.includes('Not authorized'))).toBe(true);
   });
 
   it('shows a new reader on the “who’s reading” screen when the parent goes back', async () => {
