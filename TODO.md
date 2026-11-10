@@ -6,6 +6,7 @@ Two deliberate departures from `PLAN.md`'s build sequence are baked in below:
 
 - **The migration runner moves from step 1 to step 2.** It needs the DSQL connection from `packages/core`, which doesn't exist in step 1.
 - **Alexa drops from step 8 to optional, after the widget.** Voice turned out to be adult-only (kids are refused in Amazon Kids mode), so it mostly serves the people who already have the web app.
+- **Alexa is shelved (decided 2026-11-10).** It does not work for kids' voices or kids' devices, so it adds little over the web app. Step 9 and the settings section for linking voices are not planned; the design stays in `PLAN.md` in case that changes. **The Echo Show 15 widget (step 8) is shelved too**, the same day, so the family app is the web app alone.
 
 Verify every package version against the registry (`npm view <pkg>`) as it's added, and correct `PLAN.md` when it's wrong.
 
@@ -138,7 +139,7 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 - [x] **Settings: reading goals** (`GoalsSection`): one year at a time (this year to start, "Earlier year" and "Later year" within 2000 to 2100); each reader shows "3 of 12 books read" or "no goal", a box to set the target (a whole number from 1 to 1000, checked before sending; the API's refusals are shown and what was typed is kept) and "Remove goal" only when there is one. The section asks the API again on every year change and every visit. **Found by a failing test, a real bug**: the three queries that read `family` (`Family`, `SettingsProfiles`, `SettingsGoals`) did not ask for its `id`, so Apollo could not store the family as one object and each query's reply replaced the others' (a query without `name` wiped it), which sent a pointless second request every time the settings opened. All three now ask for `id`; `queries.test.ts` checks that, because the fake API answers with an `id` whether or not a query asked, so the behavioural tests cannot see it. The existing Home, CreateFamily, settings and unlock fixtures got the `id`. 28 new tests (24 + 4), mutation-checked (24 breaks across the two rounds; four survived at first: a hard-coded reader on set, a validation message kept, a redundant box-clearing line that was removed, and the missing `id`; all are now covered or gone). All three documents validate against the real server schema
 - [x] **Settings: export books** (`ExportSection`): one "Download books for Sam" button per reader; it calls `exportGoodreadsCsv(profileId)` (a mutation, parent-only, the whole file in the reply), builds a Blob and clicks a temporary link (`download.ts`), then says "Downloading sam-books.csv". The file is saved exactly as sent (a test round-trips quotes, commas, CRLF and accents) as `text/csv;charset=utf-8`; the link is removed and the object URL released after the click. The file name comes from the reader's name: lower case, accents dropped, anything else a dash, never a path or a dot, and "reader" when nothing is left (an emoji or non-Latin name). One export at a time (every button is off while one runs, so there is no separate guard); a failure shows the API's reason and saves nothing, and an empty reply counts as a failure. 27 new tests, mutation-checked (about 20 breaks; four real survivors at first, the suffix, accents kept, the old "Downloading" message left up during the next export, and an empty reply, now covered, and an unreachable "already exporting" guard, removed). **One break still survives**: dropping `cache-and-network` on this section's readers query, because the Readers section shares that query and refreshes it. The document validates against the real server schema. Not checked in a real browser: that the click really downloads in Safari and on the tablet
 - [x] **Settings: time zone** (`TimezoneSection`): a picker of the browser's zone names plus UTC (underscores shown as spaces), starting on the family's saved zone, with "Save time zone" offered only when a different one is chosen and a note that already-saved dates do not change. This device's zone is offered ("This device is set to Asia/Tokyo", "Use Asia/Tokyo") when it differs from the chosen one and is in the list; choosing it only selects it. A saved zone this browser does not list is still offered, so the picker never shows something other than what is saved. The API's refusal is shown and the choice kept; the section asks the API again on every visit, and the picker is rebuilt when the saved zone changes (so a zone changed elsewhere shows). 15 new tests (14 on the section, 1 on the query's family `id`), mutation-checked (14 breaks; four survived at first, the picker rebuild, refetch on open, an unlisted device zone, and the family `id`, and are now covered). The document validates against the real server schema. Uses the API from PR #32, which is deployed
-- [ ] `/settings` sections still to do: Alexa linking (optional, step 9). Also remove-from-shelf on the book page, which reuses the gate. Editing a reader's name, emoji or colour has no API yet (`createProfile` and `deleteProfile` only)
+- [x] `/settings` is complete for now: readers, goals, time zone and export. Alexa linking is not planned (Alexa is shelved, see the top of this file). Editing a reader's name, emoji or colour has no API yet (`createProfile` and `deleteProfile` only)
 - [ ] No test covers `main.tsx` wiring (the provider order and passing the session to the API client); a real-browser check would
 - [ ] Ratings, reviews, dates, progress, goal ring
 - [ ] Touch-first and responsive — it doubles as the Echo Show browser fallback
@@ -155,12 +156,16 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 > **The app is worth using after step 7.** Everything below is additive.
 
-## 8 — Widget spike (Echo Show 15)
+## 8 — Widget spike (Echo Show 15) (shelved)
+
+Not planned (decided 2026-11-10), along with the rest of the Alexa and Echo work. The tasks below are kept so the design is not lost.
 
 - [ ] Hello-world APL widget renders in the Widget Gallery on the actual device
 - [ ] Only if that works: current book, progress bar, goal ring; Data Store REST API updater; `SendEvent` on tap
 
-## 9 — Alexa skill (optional)
+## 9 — Alexa skill (shelved)
+
+Not planned: voice does not work for kids' voices or kids' devices, so it adds little over the web app. Kept so the design is not lost.
 
 - [ ] Account linking against the same Cognito pool (`pitangui.amazon.com`, `layla.amazon.com` callbacks)
 - [ ] `alexa::person_id:read` in the **checked-in** manifest — an `ask deploy` can otherwise strip it silently
