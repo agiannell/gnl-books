@@ -6,10 +6,13 @@ import { createBrowserRouter, RouterProvider } from 'react-router';
 import { createApolloClient } from './apollo.ts';
 import { getAccessToken, userManager } from './auth.ts';
 import './index.css';
+import { ParentSessionProvider } from './ParentSessionProvider.tsx';
+import { createParentSession } from './parentSession.ts';
 import { routes } from './routes.tsx';
 
 const router = createBrowserRouter(routes);
-const client = createApolloClient({ getAccessToken });
+const parentSession = createParentSession();
+const client = createApolloClient({ getAccessToken, getParentToken: parentSession.getToken });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -23,7 +26,9 @@ createRoot(document.getElementById('root')!).render(
       }}
     >
       <ApolloProvider client={client}>
-        <RouterProvider router={router} />
+        <ParentSessionProvider session={parentSession}>
+          <RouterProvider router={router} />
+        </ParentSessionProvider>
       </ApolloProvider>
     </AuthProvider>
   </StrictMode>,

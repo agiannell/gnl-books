@@ -120,6 +120,25 @@ export const FINISH_BOOK = gql`
   }
 `;
 
+// The token these return goes in the `X-Parent-Token` header; it is never stored (see parentSession.ts).
+export const UNLOCK_PARENT = gql`
+  mutation UnlockParent($pin: String!) {
+    unlockParent(pin: $pin) {
+      token
+      expiresAt
+    }
+  }
+`;
+
+export const RENEW_PARENT_UNLOCK = gql`
+  mutation RenewParentUnlock {
+    renewParentUnlock {
+      token
+      expiresAt
+    }
+  }
+`;
+
 export const CREATE_FAMILY = gql`
   mutation CreateFamily($familyName: String!, $parentName: String!, $pin: String!) {
     createFamily(familyName: $familyName, parentName: $parentName, pin: $pin) {

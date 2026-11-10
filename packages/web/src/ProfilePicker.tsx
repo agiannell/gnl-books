@@ -17,6 +17,9 @@ export default function ProfilePicker({ familyName, profiles }: { familyName: st
           </li>
         ))}
       </ul>
+      <p>
+        <Link to="/settings">Parent settings</Link>
+      </p>
     </>
   );
 }

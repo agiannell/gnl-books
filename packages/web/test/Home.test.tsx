@@ -40,6 +40,7 @@ describe('Home', () => {
     expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
       ['Pat', '/p/p-1'],
       ['🦊Sam', '/p/p-2'],
+      ['Parent settings', '/settings'],
     ]);
   });
 
