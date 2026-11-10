@@ -232,6 +232,7 @@ type Mutation {
   deleteProfile(profileId: ID!): Boolean!              # parent-only; shelf, logs and goals go too; not the last profile
   exportGoodreadsCsv(profileId: ID!): String!        # parent-only
   createProfile(input: CreateProfileInput!): Profile! # parent-only
+  setTimezone(timezone: String!): Family!             # parent-only; an IANA name (or UTC); `Family.timezone` reads it; dates already written stay
   linkAlexaPerson(profileId: ID!, personId: String!): Profile!        # parent-only
   linkAlexaDevice(profileId: ID!, deviceId: String!, label: String): AlexaDevice! # parent-only
 }

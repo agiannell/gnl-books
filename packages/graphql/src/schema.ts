@@ -9,6 +9,9 @@ import {
   deleteProfile,
   getBook,
   getFamily,
+  getFamilyTimezone,
+  InvalidTimezoneError,
+  setFamilyTimezone,
   getGoal,
   getProfile,
   LastProfileError,
@@ -146,6 +149,11 @@ FamilyRef.implement({
   fields: (t) => ({
     id: t.exposeID('id'),
     name: t.exposeString('name'),
+    // The zone its dates are kept in (an IANA name). Like `profiles`, always the caller's own family.
+    timezone: t.string({
+      authScopes: { inFamily: true },
+      resolve: (_family, _args, ctx) => getFamilyTimezone(ctx.db, ctx.familyId!),
+    }),
     // The caller's own family, from the context, whatever family object this hangs off.
     profiles: t.field({
       type: [ProfileRef],
@@ -617,6 +625,25 @@ builder.mutationType({
           seriesPosition: null,
           binding: null,
         };
+      },
+    }),
+
+    // The zone later dates are stamped in (a finish date, "today", a goal's year). Dates already
+    // written are not changed. Parent-only: it decides what day a kid's finish lands on.
+    setTimezone: t.field({
+      type: FamilyRef,
+      authScopes: { isParent: true },
+      args: { timezone: t.arg.string() },
+      resolve: async (_root, args, ctx) => {
+        try {
+          await setFamilyTimezone(ctx.db, ctx.familyId!, args.timezone);
+        } catch (error) {
+          if (error instanceof InvalidTimezoneError) throw badInput(error.message);
+          throw error;
+        }
+        const family = await getFamily(ctx.db, ctx.familyId!);
+        if (!family) throw new GraphQLError('Family not found');
+        return family;
       },
     }),
 
