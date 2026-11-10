@@ -132,6 +132,9 @@ export default function SearchPage() {
           </ul>
         ))}
       <p>
+        Can’t find it? <Link to={`/p/${profileId}/add`}>Add it yourself</Link>
+      </p>
+      <p>
         <Link to={`/p/${profileId}`}>Back to the shelves</Link>
       </p>
     </>

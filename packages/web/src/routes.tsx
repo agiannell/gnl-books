@@ -1,6 +1,7 @@
 import type { RouteObject } from 'react-router';
 import App from './App.tsx';
 import Home from './Home.tsx';
+import ManualAddPage from './ManualAddPage.tsx';
 import NotFound from './NotFound.tsx';
 import ProfilePage from './ProfilePage.tsx';
 import SearchPage from './SearchPage.tsx';
@@ -16,6 +17,7 @@ export const routes: RouteObject[] = [
       { index: true, element: <Home /> },
       { path: 'p/:profileId', element: <ProfilePage /> },
       { path: 'p/:profileId/search', element: <SearchPage /> },
+      { path: 'p/:profileId/add', element: <ManualAddPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },
