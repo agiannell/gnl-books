@@ -84,6 +84,15 @@ export const IMPORT_BOOK = gql`
   }
 `;
 
+// A book the catalog lacks, typed in by hand. It has no catalog id and is shelved by the id returned here.
+export const ADD_MANUAL_BOOK = gql`
+  mutation AddManualBook($input: ManualBookInput!) {
+    addManualBook(input: $input) {
+      id
+    }
+  }
+`;
+
 export const ADD_TO_SHELF = gql`
   mutation AddToShelf($profileId: ID!, $bookId: ID!, $shelf: Shelf!) {
     addToShelf(profileId: $profileId, bookId: $bookId, shelf: $shelf) {
