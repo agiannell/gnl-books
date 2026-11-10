@@ -21,7 +21,7 @@ const renderHome = (handlers: Parameters<typeof fakeApi>[0]) => {
 
 const family = (profiles: { id: string; name: string; emoji: string | null; color: string | null }[]) => ({
   data: {
-    family: { __typename: 'Family', name: 'The Gnls', profiles: profiles.map((p) => ({ __typename: 'Profile', ...p })) },
+    family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: profiles.map((p) => ({ __typename: 'Profile', ...p })) },
   },
 });
 

@@ -14,7 +14,20 @@ import { fakeApi } from './fakeApi.ts';
 const renewed = { data: { renewParentUnlock: { __typename: 'ParentUnlock', token: 'parent', expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() } } };
 
 const renderAt = (path: string, handlers: Parameters<typeof fakeApi>[0]) => {
-  const api = fakeApi({ RenewParentUnlock: renewed, ...handlers });
+  // The goals section loads the same readers (both write the cached `family`), and the real API
+  // sends the same ones to both, so its stand-in reply repeats the readers last sent to the other.
+  let latest: { id: string; name: string }[] = [];
+  const queue = [handlers.SettingsProfiles].flat().filter((reply) => reply !== undefined);
+  const readersReply = queue.length
+    ? {
+        SettingsProfiles: () => {
+          const reply = (queue.length > 1 ? queue.shift() : queue[0]) as { data?: { family?: { profiles?: typeof latest } } };
+          latest = reply.data?.family?.profiles ?? [];
+          return reply;
+        },
+      }
+    : {};
+  const api = fakeApi({ RenewParentUnlock: renewed, SettingsGoals: () => goalsFor(latest), ...handlers, ...readersReply });
   const session = createParentSession();
   // Already unlocked: the PIN screen has its own tests.
   session.set({ token: 'parent', expiresAt: Date.now() + 10 * 60_000 });
@@ -39,17 +52,23 @@ const reader = (id: string, name: string, over: Record<string, unknown> = {}) =>
   isParent: false,
   ...over,
 });
-const readers = (...profiles: unknown[]) => ({ data: { family: { __typename: 'Family', name: 'The Gnls', profiles } } });
+const readers = (...profiles: unknown[]) => ({ data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles } } });
 const failure = (message: string) => ({ errors: [{ message }] });
 const created = { data: { createProfile: { __typename: 'Profile', id: 'p-9' } } };
 const deleted = { data: { deleteProfile: true } };
-const names = (api: ReturnType<typeof fakeApi>) =>
-  api.calls.map((c) => c.operationName).filter((name) => name !== 'RenewParentUnlock');
+// The goals section sits on the same page and loads on its own; its tests are in GoalsSection.test.tsx.
+const goalsFor = (profiles: { id: string; name: string }[]) => ({
+  data: {
+    family: { __typename: 'Family', id: 'f-1', profiles: profiles.map((p) => ({ __typename: 'Profile', id: p.id, name: p.name, goal: null })) },
+  },
+});
+const elsewhere = new Set(['RenewParentUnlock', 'SettingsGoals']);
+const names = (api: ReturnType<typeof fakeApi>) => api.calls.map((c) => c.operationName).filter((name) => !elsewhere.has(name));
 // The variables of the request at position `n` in `names(api)`.
 const variablesOf = (api: ReturnType<typeof fakeApi>, n: number) => {
   let seen = -1;
   for (let i = 0; i < api.calls.length; i++) {
-    if (api.calls[i]!.operationName === 'RenewParentUnlock') continue;
+    if (elsewhere.has(api.calls[i]!.operationName)) continue;
     if (++seen === n) return api.variables[i];
   }
 };
@@ -63,8 +82,9 @@ const addReader = (user: ReturnType<typeof userEvent.setup>) => user.click(scree
 describe('the readers section of the settings', () => {
   it('lists each reader with their emoji, and marks the parents', async () => {
     const api = renderAt('/settings', { SettingsProfiles: readers(PAT, SAM) });
-    const list = await screen.findByRole('list');
-    const items = within(list).getAllByRole('listitem');
+    const section = await screen.findByRole('region', { name: 'Readers' });
+    await within(section).findByText('Delete Sam');
+    const items = within(section).getAllByRole('listitem');
     expect(items.map((li) => li.textContent)).toEqual([
       'Pat (parent) Delete Pat',
       '🦊 Sam Delete Sam',
@@ -214,7 +234,7 @@ describe('the readers section of the settings', () => {
 
   it('sends the parent token with the changes', async () => {
     const seen: (string | null)[] = [];
-    const api = fakeApi({ RenewParentUnlock: renewed, SettingsProfiles: [readers(PAT), readers(PAT)], CreateProfile: created });
+    const api = fakeApi({ RenewParentUnlock: renewed, SettingsGoals: goalsFor([PAT]), SettingsProfiles: [readers(PAT), readers(PAT)], CreateProfile: created });
     const session = createParentSession();
     session.set({ token: 'parent', expiresAt: Date.now() + 600_000 });
     const client = createApolloClient({
@@ -244,7 +264,7 @@ describe('the readers section of the settings', () => {
     const summary = (id: string, name: string) => ({ __typename: 'Profile', id, name, emoji: null, color: null });
     renderAt('/settings', {
       Me: { data: { me: { __typename: 'Account', familyId: 'f-1' } } },
-      Family: { data: { family: { __typename: 'Family', name: 'The Gnls', profiles: [summary('p-1', 'Pat')] } } },
+      Family: { data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: [summary('p-1', 'Pat')] } } },
       SettingsProfiles: [readers(PAT), readers(PAT, reader('p-9', 'Kit'))],
     });
     const user = userEvent.setup();
@@ -265,8 +285,8 @@ describe('the readers section of the settings', () => {
     renderAt('/', {
       Me: { data: { me: { __typename: 'Account', familyId: 'f-1' } } },
       Family: [
-        { data: { family: { __typename: 'Family', name: 'The Gnls', profiles: [profileSummary('p-1', 'Pat')] } } },
-        { data: { family: { __typename: 'Family', name: 'The Gnls', profiles: [profileSummary('p-1', 'Pat'), profileSummary('p-9', 'Kit')] } } },
+        { data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: [profileSummary('p-1', 'Pat')] } } },
+        { data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: [profileSummary('p-1', 'Pat'), profileSummary('p-9', 'Kit')] } } },
       ],
       SettingsProfiles: [readers(PAT), readers(PAT, reader('p-9', 'Kit'))],
       CreateProfile: created,

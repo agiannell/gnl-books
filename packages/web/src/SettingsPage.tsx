@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import GoalsSection from './GoalsSection.tsx';
 import ParentGate from './ParentGate.tsx';
 import ProfilesSection from './ProfilesSection.tsx';
 
@@ -9,6 +10,7 @@ export default function SettingsPage() {
       <ParentGate>
         <h1>Settings</h1>
         <ProfilesSection />
+        <GoalsSection />
       </ParentGate>
       <p>
         <Link to="/">Back to who’s reading</Link>

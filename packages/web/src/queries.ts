@@ -8,9 +8,13 @@ export const ME = gql`
   }
 `;
 
+// Every query for the family asks for its id: with it Apollo stores the family as one object and
+// merges what each query reads. Without it, a query that skips `name` replaces the whole object
+// and the other queries lose theirs.
 export const FAMILY = gql`
   query Family {
     family {
+      id
       name
       profiles {
         id
@@ -123,6 +127,7 @@ export const FINISH_BOOK = gql`
 export const SETTINGS_PROFILES = gql`
   query SettingsProfiles {
     family {
+      id
       name
       profiles {
         id
@@ -132,6 +137,39 @@ export const SETTINGS_PROFILES = gql`
         isParent
       }
     }
+  }
+`;
+
+export const SETTINGS_GOALS = gql`
+  query SettingsGoals($year: Int!) {
+    family {
+      id
+      profiles {
+        id
+        name
+        goal(year: $year) {
+          year
+          target
+          booksRead
+        }
+      }
+    }
+  }
+`;
+
+export const SET_GOAL = gql`
+  mutation SetGoal($profileId: ID!, $year: Int!, $target: Int!) {
+    setGoal(profileId: $profileId, year: $year, target: $target) {
+      year
+      target
+      booksRead
+    }
+  }
+`;
+
+export const REMOVE_GOAL = gql`
+  mutation RemoveGoal($profileId: ID!, $year: Int!) {
+    removeGoal(profileId: $profileId, year: $year)
   }
 `;
 
@@ -238,6 +276,10 @@ export interface SettingsProfile extends ProfileSummary {
 
 export interface SettingsProfilesData {
   family: { name: string; profiles: SettingsProfile[] };
+}
+
+export interface SettingsGoalsData {
+  family: { profiles: { id: string; name: string; goal: GoalSummary | null }[] };
 }
 
 export interface FamilyData {
