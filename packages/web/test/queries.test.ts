@@ -1,7 +1,7 @@
 import { gql } from '@apollo/client';
 import { type DocumentNode, Kind, type SelectionSetNode } from 'graphql';
 import { describe, expect, it } from 'vitest';
-import { FAMILY, SETTINGS_GOALS, SETTINGS_PROFILES } from '../src/queries.ts';
+import { FAMILY, SETTINGS_GOALS, SETTINGS_PROFILES, SETTINGS_TIMEZONE } from '../src/queries.ts';
 
 // The fake API in the other tests answers with an `id` whether or not a query asked for it, so
 // they cannot see a query that forgot it. A real server sends only what was asked for.
@@ -22,6 +22,7 @@ describe('the queries that read the family', () => {
     ['Family', FAMILY],
     ['SettingsProfiles', SETTINGS_PROFILES],
     ['SettingsGoals', SETTINGS_GOALS],
+    ['SettingsTimezone', SETTINGS_TIMEZONE],
   ])('%s asks for the family’s id', (_name, doc) => {
     expect(familyFields(doc)).toContain('id');
   });

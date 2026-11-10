@@ -21,6 +21,7 @@ const renderSettings = (handlers: Parameters<typeof fakeApi>[0], session = creat
   const api = fakeApi({
     SettingsProfiles: readers,
     SettingsGoals: { data: { family: { __typename: 'Family', id: 'f-1', profiles: [] } } },
+    SettingsTimezone: { data: { family: { __typename: 'Family', id: 'f-1', timezone: 'America/Chicago' } } },
     ...handlers,
   });
   const client = createApolloClient({

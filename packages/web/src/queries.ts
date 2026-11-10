@@ -180,6 +180,24 @@ export const EXPORT_GOODREADS_CSV = gql`
   }
 `;
 
+export const SETTINGS_TIMEZONE = gql`
+  query SettingsTimezone {
+    family {
+      id
+      timezone
+    }
+  }
+`;
+
+export const SET_TIMEZONE = gql`
+  mutation SetTimezone($timezone: String!) {
+    setTimezone(timezone: $timezone) {
+      id
+      timezone
+    }
+  }
+`;
+
 export const CREATE_PROFILE = gql`
   mutation CreateProfile($input: CreateProfileInput!) {
     createProfile(input: $input) {
@@ -287,6 +305,10 @@ export interface SettingsProfilesData {
 
 export interface SettingsGoalsData {
   family: { profiles: { id: string; name: string; goal: GoalSummary | null }[] };
+}
+
+export interface SettingsTimezoneData {
+  family: { id: string; timezone: string };
 }
 
 export interface FamilyData {
