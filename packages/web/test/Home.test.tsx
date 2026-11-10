@@ -38,9 +38,9 @@ describe('Home', () => {
     expect(items).toEqual(['Pat (parent)', '🦊 Sam']);
   });
 
-  it('says there is no family yet, without asking for one', async () => {
+  it('asks someone with no family to set one up, without asking the API for a family', async () => {
     const api = renderHome({ Me: { data: { me: { __typename: 'Account', familyId: null } } } });
-    expect(await screen.findByText(/no family yet/)).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Set up your family' })).toBeTruthy();
     expect(api.calls.map((c) => c.operationName)).toEqual(['Me']);
   });
 
