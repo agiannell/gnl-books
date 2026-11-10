@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as cdk from 'aws-cdk-lib/core';
 import { Match, Template } from 'aws-cdk-lib/assertions';
@@ -8,7 +9,10 @@ import { GnlBooksStack } from '../lib/gnl-books-stack';
 // here touches AWS.
 // An empty list tells CDK not to run esbuild for the migration runner, which
 // would be slow and isn't what these tests are about.
-const app = new cdk.App({ context: { 'aws:cdk:bundling-stacks': [] } });
+// `webDist` points the site deployment at the placeholder page, so these tests need no web build.
+const app = new cdk.App({
+  context: { 'aws:cdk:bundling-stacks': [], webDist: path.join(__dirname, '..', 'placeholder') },
+});
 const stack = new GnlBooksStack(app, 'TestStack', {
   env: { account: '111111111111', region: 'us-west-2' },
 });
@@ -165,9 +169,134 @@ describe('web', () => {
     }
   });
 
-  it('deploys the placeholder and invalidates the cache', () => {
+  it('deploys the site and invalidates the cache', () => {
     template.hasResourceProperties('Custom::CDKBucketDeployment', {
       DistributionPaths: ['/*'],
+    });
+  });
+});
+
+describe('web hosting', () => {
+  const deployments = () => Object.values(template.findResources('Custom::CDKBucketDeployment')).map((r) => r.Properties);
+
+  it('publishes the site in two deployments, the hashed files and everything else', () => {
+    template.resourceCountIs('Custom::CDKBucketDeployment', 2);
+    const [assets] = deployments().filter((d) => d.Include);
+    const [site] = deployments().filter((d) => !d.Include);
+    expect(assets).toMatchObject({ Exclude: ['*'], Include: ['assets/*'] });
+    expect(site).toMatchObject({ Exclude: ['assets/*'] });
+  });
+
+  it('keeps the hashed files for a year, because their names change when they do', () => {
+    const [assets] = deployments().filter((d) => d.Include);
+    expect(assets.SystemMetadata['cache-control']).toBe('public, max-age=31536000, immutable');
+  });
+
+  it('makes the browser check index.html every time', () => {
+    const [site] = deployments().filter((d) => !d.Include);
+    expect(site.SystemMetadata['cache-control']).toBe('no-cache');
+  });
+
+  // Excluded files are also skipped when pruning. Without the exclude, the site deployment would delete
+  // the hashed files the other deployment just uploaded; without `Prune: false` there, the assets
+  // deployment would delete every file that is not under assets/, index.html included.
+  it('never deletes the hashed files, and does not prune in the assets deployment at all', () => {
+    const [assets] = deployments().filter((d) => d.Include);
+    const [site] = deployments().filter((d) => !d.Include);
+    expect(assets.Prune).toBe(false);
+    expect(site.Exclude).toContain('assets/*');
+    expect(site.Prune).not.toBe(false);
+  });
+
+  it('invalidates the cache only after the hashed files are there, so no page names a missing file', () => {
+    const resources = template.findResources('Custom::CDKBucketDeployment');
+    const entries = Object.entries(resources);
+    const [assetsId] = entries.find(([, r]) => r.Properties.Include)!;
+    const [, site] = entries.find(([, r]) => !r.Properties.Include)!;
+    expect(site.DependsOn).toContain(assetsId);
+    const [, assets] = entries.find(([, r]) => r.Properties.Include)!;
+    // Only the second deployment sends the invalidation.
+    expect(assets.Properties.DistributionPaths).toBeUndefined();
+    expect(site.Properties.DistributionPaths).toEqual(['/*']);
+  });
+
+  describe('security headers', () => {
+    const headers = () => {
+      const [policy] = Object.values(template.findResources('AWS::CloudFront::ResponseHeadersPolicy'));
+      return policy!.Properties.ResponseHeadersPolicyConfig;
+    };
+    const csp = () => {
+      const directives = new Map<string, string[]>();
+      for (const part of headers().SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy.split('; ')) {
+        const [name, ...values] = part.split(' ');
+        directives.set(name!, values);
+      }
+      return directives;
+    };
+
+    it('applies to the site and not to the API', () => {
+      template.resourceCountIs('AWS::CloudFront::ResponseHeadersPolicy', 1);
+      template.hasResourceProperties('AWS::CloudFront::Distribution', {
+        DistributionConfig: Match.objectLike({
+          DefaultCacheBehavior: Match.objectLike({ ResponseHeadersPolicyId: Match.anyValue() }),
+        }),
+      });
+      const [distribution] = Object.values(template.findResources('AWS::CloudFront::Distribution'));
+      for (const behavior of distribution!.Properties.DistributionConfig.CacheBehaviors) {
+        expect(behavior.ResponseHeadersPolicyId).toBeUndefined();
+      }
+    });
+
+    it('lets only the site’s own scripts run: no inline scripts, no eval, nothing from other hosts', () => {
+      expect(csp().get('script-src')).toEqual(["'self'"]);
+      expect(csp().get('default-src')).toEqual(["'self'"]);
+      expect(csp().get('object-src')).toEqual(["'none'"]);
+    });
+
+    it('allows no wildcard anywhere', () => {
+      expect(headers().SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy).not.toMatch(/(^|\s)\*(\s|;|$)/);
+    });
+
+    it('lets the page call the API and the two Cognito hosts the sign-in uses, and nothing else', () => {
+      expect(csp().get('connect-src')).toEqual([
+        "'self'",
+        'https://cognito-idp.us-west-2.amazonaws.com',
+        'https://gnl-books.auth.us-west-2.amazoncognito.com',
+      ]);
+    });
+
+    it('lets book covers load from Hardcover', () => {
+      expect(csp().get('img-src')).toEqual(["'self'", 'https://assets.hardcover.app', 'data:']);
+    });
+
+    it('allows inline style attributes (a reader’s colour) but no inline style elements', () => {
+      expect(csp().get('style-src')).toEqual(["'self'"]);
+      expect(csp().get('style-src-attr')).toEqual(["'unsafe-inline'"]);
+    });
+
+    it('stops the page being framed, and restricts forms and the base address', () => {
+      expect(csp().get('frame-ancestors')).toEqual(["'none'"]);
+      expect(csp().get('form-action')).toEqual(["'self'"]);
+      expect(csp().get('base-uri')).toEqual(["'self'"]);
+      expect(headers().SecurityHeadersConfig.FrameOptions).toEqual({ FrameOption: 'DENY', Override: true });
+    });
+
+    it('sends the other standard headers, replacing any the origin sets', () => {
+      const config = headers().SecurityHeadersConfig;
+      expect(config.ContentTypeOptions).toEqual({ Override: true });
+      expect(config.ReferrerPolicy).toEqual({ ReferrerPolicy: 'strict-origin-when-cross-origin', Override: true });
+      expect(config.StrictTransportSecurity).toMatchObject({ AccessControlMaxAgeSec: 365 * 24 * 60 * 60, Override: true });
+      expect(config.ContentSecurityPolicy.Override).toBe(true);
+    });
+
+    it('does not make other gnlfamily.com sites HTTPS-only', () => {
+      expect(headers().SecurityHeadersConfig.StrictTransportSecurity.IncludeSubdomains).not.toBe(true);
+    });
+
+    it('turns off the camera, microphone, location and payments', () => {
+      const [header] = headers().CustomHeadersConfig.Items;
+      expect(header).toMatchObject({ Header: 'Permissions-Policy', Override: true });
+      expect(header.Value).toBe('camera=(), microphone=(), geolocation=(), payment=()');
     });
   });
 });

@@ -23,6 +23,10 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn typecheck
       - run: yarn test
+      # What the site deployment publishes: the stack reads packages/web/dist and
+      # fails to synthesize without it, so a deploy can never ship an empty site.
+      - name: Build the web app
+        run: yarn build:web
       # The role ARN contains the account ID, and this repo is public, so it
       # lives in a repository secret rather than in this file.
       - name: Configure AWS credentials

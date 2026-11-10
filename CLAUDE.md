@@ -13,6 +13,7 @@ Node 24 (`.nvmrc`), Yarn 1.22 classic. Run from the repo root.
 
 ```bash
 yarn typecheck                                # root tsc --noEmit, then `yarn workspaces run typecheck` (deliberately not `tsc -b`)
+yarn build:web                                # builds packages/web/dist; the CDK stack publishes it, so `cdk synth`/`diff`/`deploy` fail without it (the infra tests do not need it: they set the `webDist` context to infra/placeholder)
 yarn test                                     # vitest run, all projects
 yarn test --project infra                     # one project
 yarn test:watch
