@@ -1,5 +1,6 @@
 import { ApolloProvider } from '@apollo/client/react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { createApolloClient } from '../src/apollo.ts';
 import Home from '../src/Home.tsx';
@@ -12,7 +13,7 @@ const family = {
     family: {
       __typename: 'Family',
       name: 'The Gnls',
-      profiles: [{ __typename: 'Profile', id: 'p-1', name: 'Pat', emoji: null, isParent: true }],
+      profiles: [{ __typename: 'Profile', id: 'p-1', name: 'Pat', emoji: null, color: null }],
     },
   },
 };
@@ -22,9 +23,11 @@ const renderHome = (handlers: Parameters<typeof fakeApi>[0]) => {
   const api = fakeApi(handlers);
   const client = createApolloClient({ getAccessToken: async () => 'tok', fetch: api.fetch });
   render(
-    <ApolloProvider client={client}>
-      <Home />
-    </ApolloProvider>,
+    <MemoryRouter>
+      <ApolloProvider client={client}>
+        <Home />
+      </ApolloProvider>
+    </MemoryRouter>,
   );
   return api;
 };
@@ -53,7 +56,7 @@ describe('setting up a family', () => {
     await screen.findByRole('heading', { name: 'Set up your family' });
     fill({ ...valid, 'Family name': '  The Gnls ', 'Your name': ' Pat  ' });
     submit();
-    expect(await screen.findByRole('heading', { name: 'The Gnls' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Who’s reading?' })).toBeTruthy();
     const i = api.calls.findIndex((c) => c.operationName === 'CreateFamily');
     expect(api.variables[i]).toEqual({ familyName: 'The Gnls', parentName: 'Pat', pin: '4821' });
     expect(api.calls[i]?.authorization).toBe('Bearer tok');
@@ -97,7 +100,7 @@ describe('setting up a family', () => {
     await screen.findByRole('heading', { name: 'Set up your family' });
     fill(valid);
     submit();
-    expect(await screen.findByRole('heading', { name: 'The Gnls' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Who’s reading?' })).toBeTruthy();
     expect(api.calls.filter((c) => c.operationName === 'Me')).toHaveLength(2);
   });
 

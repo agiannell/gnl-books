@@ -1,5 +1,6 @@
 import { ApolloProvider } from '@apollo/client/react';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { createApolloClient } from '../src/apollo.ts';
 import Home from '../src/Home.tsx';
@@ -9,33 +10,59 @@ const renderHome = (handlers: Parameters<typeof fakeApi>[0]) => {
   const api = fakeApi(handlers);
   const client = createApolloClient({ getAccessToken: async () => 'tok', fetch: api.fetch });
   render(
-    <ApolloProvider client={client}>
-      <Home />
-    </ApolloProvider>,
+    <MemoryRouter>
+      <ApolloProvider client={client}>
+        <Home />
+      </ApolloProvider>
+    </MemoryRouter>,
   );
   return api;
 };
 
+const family = (profiles: { id: string; name: string; emoji: string | null; color: string | null }[]) => ({
+  data: {
+    family: { __typename: 'Family', name: 'The Gnls', profiles: profiles.map((p) => ({ __typename: 'Profile', ...p })) },
+  },
+});
+
 describe('Home', () => {
-  it('lists the family’s profiles, marking parents', async () => {
+  it('asks who is reading, with a link to each profile’s page', async () => {
     renderHome({
       Me: { data: { me: { __typename: 'Account', familyId: 'f-1' } } },
-      Family: {
-        data: {
-          family: {
-            __typename: 'Family',
-            name: 'The Gnls',
-            profiles: [
-              { __typename: 'Profile', id: 'p-1', name: 'Pat', emoji: null, isParent: true },
-              { __typename: 'Profile', id: 'p-2', name: 'Sam', emoji: '🦊', isParent: false },
-            ],
-          },
-        },
-      },
+      Family: family([
+        { id: 'p-1', name: 'Pat', emoji: null, color: null },
+        { id: 'p-2', name: 'Sam', emoji: '🦊', color: '#3366cc' },
+      ]),
     });
-    expect(await screen.findByRole('heading', { name: 'The Gnls' })).toBeTruthy();
-    const items = screen.getAllByRole('listitem').map((li) => li.textContent?.trim());
-    expect(items).toEqual(['Pat (parent)', '🦊 Sam']);
+    expect(await screen.findByRole('heading', { name: 'Who’s reading?' })).toBeTruthy();
+    expect(screen.getByText('The Gnls')).toBeTruthy();
+    const links = screen.getAllByRole('link');
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['Pat', '/p/p-1'],
+      ['🦊Sam', '/p/p-2'],
+    ]);
+  });
+
+  it('names each link by the reader alone, not by their emoji', async () => {
+    renderHome({
+      Me: { data: { me: { __typename: 'Account', familyId: 'f-1' } } },
+      Family: family([{ id: 'p-2', name: 'Sam', emoji: '🦊', color: null }]),
+    });
+    expect(await screen.findByRole('link', { name: 'Sam' })).toBeTruthy();
+  });
+
+  it('colours a profile’s border with their colour, and leaves it alone without one', async () => {
+    renderHome({
+      Me: { data: { me: { __typename: 'Account', familyId: 'f-1' } } },
+      Family: family([
+        { id: 'p-1', name: 'Pat', emoji: null, color: null },
+        { id: 'p-2', name: 'Sam', emoji: null, color: '#3366cc' },
+      ]),
+    });
+    const sam = await screen.findByRole('link', { name: 'Sam' });
+    // A browser normalizes the colour to rgb(); happy-dom keeps it as written.
+    expect(sam.style.borderColor).toMatch(/^(#3366cc|rgb\(51, 102, 204\))$/i);
+    expect(screen.getByRole('link', { name: 'Pat' }).getAttribute('style')).toBeNull();
   });
 
   it('asks someone with no family to set one up, without asking the API for a family', async () => {
@@ -53,9 +80,9 @@ describe('Home', () => {
   it('sends the bearer token with both queries', async () => {
     const api = renderHome({
       Me: { data: { me: { __typename: 'Account', familyId: 'f-1' } } },
-      Family: { data: { family: { __typename: 'Family', name: 'The Gnls', profiles: [] } } },
+      Family: family([]),
     });
-    await screen.findByRole('heading', { name: 'The Gnls' });
+    await screen.findByRole('heading', { name: 'Who’s reading?' });
     expect(api.calls).toEqual([
       { operationName: 'Me', authorization: 'Bearer tok' },
       { operationName: 'Family', authorization: 'Bearer tok' },
