@@ -120,6 +120,35 @@ export const FINISH_BOOK = gql`
   }
 `;
 
+export const SETTINGS_PROFILES = gql`
+  query SettingsProfiles {
+    family {
+      name
+      profiles {
+        id
+        name
+        emoji
+        color
+        isParent
+      }
+    }
+  }
+`;
+
+export const CREATE_PROFILE = gql`
+  mutation CreateProfile($input: CreateProfileInput!) {
+    createProfile(input: $input) {
+      id
+    }
+  }
+`;
+
+export const DELETE_PROFILE = gql`
+  mutation DeleteProfile($profileId: ID!) {
+    deleteProfile(profileId: $profileId)
+  }
+`;
+
 // The token these return goes in the `X-Parent-Token` header; it is never stored (see parentSession.ts).
 export const UNLOCK_PARENT = gql`
   mutation UnlockParent($pin: String!) {
@@ -201,6 +230,14 @@ export interface ProfileSummary {
   emoji: string | null;
   /** `#rrggbb`; the API only accepts that shape, so it is safe in a style. */
   color: string | null;
+}
+
+export interface SettingsProfile extends ProfileSummary {
+  isParent: boolean;
+}
+
+export interface SettingsProfilesData {
+  family: { name: string; profiles: SettingsProfile[] };
 }
 
 export interface FamilyData {

@@ -12,8 +12,13 @@ import { fakeApi } from './fakeApi.ts';
 // A page that sends one request, to see which headers it carries.
 const ME = { data: { me: { __typename: 'Account', familyId: 'f-1' } } };
 
+// The settings page loads the readers once unlocked; these tests are about the lock, so it is an empty family.
+const readers = { data: { family: { __typename: 'Family', name: 'The Gnls', profiles: [] } } };
+const parentCalls = (api: ReturnType<typeof fakeApi>) =>
+  api.calls.map((c) => c.operationName).filter((name) => /Parent/.test(name));
+
 const renderSettings = (handlers: Parameters<typeof fakeApi>[0], session = createParentSession()) => {
-  const api = fakeApi(handlers);
+  const api = fakeApi({ SettingsProfiles: readers, ...handlers });
   const client = createApolloClient({
     getAccessToken: async () => 'tok',
     getParentToken: session.getToken,
@@ -236,11 +241,11 @@ describe('keeping the unlock short', () => {
     await screen.findByRole('heading', { name: 'Settings' });
     // Too soon: no renewal.
     await user.click(document.body);
-    expect(api.calls.map((c) => c.operationName)).toEqual(['UnlockParent']);
+    expect(parentCalls(api)).toEqual(['UnlockParent']);
     act(() => void vi.advanceTimersByTime(31_000));
     await user.click(document.body);
     await waitFor(() => expect(session.getToken()).toBe('second'));
-    expect(api.calls.map((c) => c.operationName)).toEqual(['UnlockParent', 'RenewParentUnlock']);
+    expect(parentCalls(api)).toEqual(['UnlockParent', 'RenewParentUnlock']);
   });
 
   it('renews once for a burst of activity, not once per click', async () => {
