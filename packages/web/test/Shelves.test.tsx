@@ -1,7 +1,15 @@
 import { render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { ShelfItem } from '../src/queries.ts';
-import Shelves from '../src/Shelves.tsx';
+import ShelvesInRouter from '../src/Shelves.tsx';
+
+// Each title is a link, so the list needs a router around it.
+const Shelves = ({ items }: { items: ShelfItem[] }) => (
+  <MemoryRouter>
+    <ShelvesInRouter items={items} profileId="p-2" />
+  </MemoryRouter>
+);
 
 let n = 0;
 const item = (over: Partial<Omit<ShelfItem, 'book'>> & { book?: Partial<ShelfItem['book']> } = {}): ShelfItem => {
@@ -21,6 +29,11 @@ const item = (over: Partial<Omit<ShelfItem, 'book'>> & { book?: Partial<ShelfIte
 const section = (title: RegExp) => within(screen.getByRole('region', { name: title }));
 
 describe('Shelves', () => {
+  it('links each title to that book’s page for the reader', () => {
+    render(<Shelves items={[item({ book: { id: 'b-77', title: 'Dog Man' } })]} />);
+    expect(screen.getByRole('link', { name: 'Dog Man' }).getAttribute('href')).toBe('/p/p-2/book/b-77');
+  });
+
   it('lists the three shelves in reading order, each with a count', () => {
     render(<Shelves items={[]} />);
     expect(screen.getAllByRole('heading').map((h) => h.textContent)).toEqual([

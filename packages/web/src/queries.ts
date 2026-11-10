@@ -53,6 +53,73 @@ export const PROFILE = gql`
   }
 `;
 
+// The fields of a shelf entry that the book page edits. Every edit returns these, and since
+// Apollo stores an entry by its id, the page and the shelves both update from the reply.
+const ENTRY_FIELDS = `
+  id
+  shelf
+  rating
+  review
+  dateRead
+  currentPage
+`;
+
+// The book page finds its entry in the reader's shelf by book id: a family's shelf is small,
+// and the API has no lookup of one entry by book.
+export const BOOK_PAGE = gql`
+  query BookPage($id: ID!) {
+    profile(id: $id) {
+      id
+      name
+      shelf {
+        ${ENTRY_FIELDS}
+        book {
+          id
+          title
+          authors
+          pages
+          releaseYear
+          seriesName
+          seriesPosition
+          description
+        }
+      }
+    }
+  }
+`;
+
+export const RATE_BOOK = gql`
+  mutation RateBook($shelfEntryId: ID!, $rating: Int) {
+    rateBook(shelfEntryId: $shelfEntryId, rating: $rating) {
+      ${ENTRY_FIELDS}
+    }
+  }
+`;
+
+export const REVIEW_BOOK = gql`
+  mutation ReviewBook($shelfEntryId: ID!, $review: String!) {
+    reviewBook(shelfEntryId: $shelfEntryId, review: $review) {
+      ${ENTRY_FIELDS}
+    }
+  }
+`;
+
+export const LOG_PROGRESS = gql`
+  mutation LogProgress($shelfEntryId: ID!, $page: Int) {
+    logProgress(shelfEntryId: $shelfEntryId, page: $page, source: WEB) {
+      ${ENTRY_FIELDS}
+    }
+  }
+`;
+
+export const FINISH_BOOK = gql`
+  mutation FinishBook($shelfEntryId: ID!, $dateRead: String) {
+    finishBook(shelfEntryId: $shelfEntryId, dateRead: $dateRead) {
+      ${ENTRY_FIELDS}
+    }
+  }
+`;
+
 export const CREATE_FAMILY = gql`
   mutation CreateFamily($familyName: String!, $parentName: String!, $pin: String!) {
     createFamily(familyName: $familyName, parentName: $parentName, pin: $pin) {
@@ -98,6 +165,8 @@ export const ADD_TO_SHELF = gql`
     addToShelf(profileId: $profileId, bookId: $bookId, shelf: $shelf) {
       id
       shelf
+      dateRead
+      currentPage
     }
   }
 `;
@@ -137,6 +206,31 @@ export interface ShelfItem {
     seriesName: string | null;
     seriesPosition: number | null;
   };
+}
+
+/** One entry on the book page: what can be edited, and the book it is about. */
+export interface BookPageEntry {
+  id: string;
+  shelf: ShelfName;
+  rating: number | null;
+  review: string | null;
+  /** `YYYY-MM-DD`. */
+  dateRead: string | null;
+  currentPage: number | null;
+  book: {
+    id: string;
+    title: string;
+    authors: string[];
+    pages: number | null;
+    releaseYear: number | null;
+    seriesName: string | null;
+    seriesPosition: number | null;
+    description: string | null;
+  };
+}
+
+export interface BookPageData {
+  profile: { id: string; name: string; shelf: BookPageEntry[] } | null;
 }
 
 /** A catalog hit from the search. `sourceId` is the catalog's id, not ours. */
