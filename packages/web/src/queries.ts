@@ -241,6 +241,14 @@ export const CREATE_FAMILY = gql`
   }
 `;
 
+// Parent-only: the API refuses it without the unlock token. Takes the book off one reader's shelf, with
+// its rating, review and reading history; the book stays in the library for everyone else.
+export const REMOVE_FROM_SHELF = gql`
+  mutation RemoveFromShelf($shelfEntryId: ID!) {
+    removeFromShelf(shelfEntryId: $shelfEntryId)
+  }
+`;
+
 export const SEARCH_BOOKS = gql`
   query SearchBooks($query: String!) {
     searchBooks(query: $query) {

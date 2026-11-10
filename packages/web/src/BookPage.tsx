@@ -1,10 +1,11 @@
 import { useQuery } from '@apollo/client/react';
 import { Button, Card, Flex, Grid, Heading, Strong, Text, TextArea, TextField } from '@radix-ui/themes';
 import { type FormEvent, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import Cover from './Cover.tsx';
 import { formatDate, seriesLabel } from './format.ts';
 import NotFound from './NotFound.tsx';
+import RemoveFromShelf from './RemoveFromShelf.tsx';
 import {
   ADD_TO_SHELF,
   BOOK_PAGE,
@@ -176,6 +177,7 @@ export default function BookPage() {
     fetchPolicy: 'cache-and-network',
   });
   const { edit, busy, error: editError } = useEdit();
+  const navigate = useNavigate();
 
   if (error) return <Alert>Something went wrong: {error.message}</Alert>;
   if (loading || !data) return <Loading />;
@@ -256,6 +258,15 @@ export default function BookPage() {
           </Flex>
         </Panel>
       </Grid>
+
+      <RemoveFromShelf
+        entryId={entry.id}
+        title={book.title}
+        readerName={data.profile.name}
+        // The shelves ask the API again on every visit and show "Loading…" until it answers, so the book
+        // is not on them for a moment after it is gone, and this page's own copy is never touched.
+        onRemoved={() => navigate(`/p/${profileId}`)}
+      />
 
       <Flex>
         <Button asChild variant="ghost" color="gray">
