@@ -31,7 +31,7 @@ export default function ProfilePage() {
       <p>
         <Link to={`/p/${profileId}/search`}>Find a book</Link>
       </p>
-      <Shelves items={shelf} />
+      <Shelves items={shelf} profileId={profileId} />
       <p>
         <Link to="/">Switch reader</Link>
       </p>

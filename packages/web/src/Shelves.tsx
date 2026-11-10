@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { formatDate, seriesLabel, stars } from './format.ts';
 import type { ShelfItem, ShelfName } from './queries.ts';
 
@@ -8,12 +9,14 @@ const SECTIONS: { shelf: ShelfName; title: string; empty: string }[] = [
   { shelf: 'READ', title: 'Read', empty: 'No finished books yet.' },
 ];
 
-function Entry({ item }: { item: ShelfItem }) {
+function Entry({ item, profileId }: { item: ShelfItem; profileId: string }) {
   const { book } = item;
   const seriesText = seriesLabel(book);
   return (
     <li>
-      <strong>{book.title}</strong>
+      <strong>
+        <Link to={`/p/${profileId}/book/${book.id}`}>{book.title}</Link>
+      </strong>
       <div>by {book.authors.join(', ')}</div>
       {seriesText && <div>{seriesText}</div>}
       {item.shelf === 'CURRENTLY_READING' && item.currentPage !== null && (
@@ -30,7 +33,7 @@ function Entry({ item }: { item: ShelfItem }) {
 }
 
 /** A reader's books in three lists. Text only for now; covers wait for the site's content security policy. */
-export default function Shelves({ items }: { items: ShelfItem[] }) {
+export default function Shelves({ items, profileId }: { items: ShelfItem[]; profileId: string }) {
   return (
     <>
       {SECTIONS.map(({ shelf, title, empty }) => {
@@ -45,7 +48,7 @@ export default function Shelves({ items }: { items: ShelfItem[] }) {
             ) : (
               <ul>
                 {entries.map((item) => (
-                  <Entry key={item.id} item={item} />
+                  <Entry key={item.id} item={item} profileId={profileId} />
                 ))}
               </ul>
             )}
