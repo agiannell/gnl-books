@@ -4,6 +4,8 @@ import type { Db } from '@gnl-books/core';
 
 const {
   getFamily,
+  getFamilyTimezone,
+  setFamilyTimezone,
   bootstrapFamily,
   attemptParentUnlock,
   cacheHardcoverBook,
@@ -26,6 +28,8 @@ const {
   deleteProfile,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
+  getFamilyTimezone: vi.fn(),
+  setFamilyTimezone: vi.fn(),
   bootstrapFamily: vi.fn(),
   attemptParentUnlock: vi.fn(),
   cacheHardcoverBook: vi.fn(),
@@ -54,6 +58,8 @@ vi.mock('@gnl-books/core', async () => {
   return {
     ...actual,
     getFamily,
+    getFamilyTimezone,
+    setFamilyTimezone,
     bootstrapFamily,
     attemptParentUnlock,
     cacheHardcoverBook,
@@ -80,6 +86,7 @@ import {
   AlreadyBootstrappedError,
   BookSourceError,
   DateInFutureError,
+  InvalidTimezoneError,
   ProgressRejectedError,
   LastProfileError,
   TooManyProfilesError,
@@ -110,6 +117,8 @@ const run =(source: string, context: Partial<Context> = {}) =>
 
 beforeEach(() => {
   getFamily.mockReset();
+  getFamilyTimezone.mockReset();
+  setFamilyTimezone.mockReset();
   bootstrapFamily.mockReset();
   attemptParentUnlock.mockReset();
   cacheHardcoverBook.mockReset();
@@ -1031,8 +1040,58 @@ describe('removeGoal', () => {
   });
 });
 
+describe('family timezone', () => {
+  it('is the family’s own, read for the family in the context and never from an argument', async () => {
+    getFamily.mockResolvedValue({ id: 'family-1', name: 'Giannell' });
+    getFamilyTimezone.mockResolvedValue('Europe/Paris');
+    const result = await run('{ family { timezone } }', { familyId: 'family-1' });
+    expect(result).toEqual({ data: { family: { timezone: 'Europe/Paris' } } });
+    expect(getFamilyTimezone).toHaveBeenCalledWith(db, 'family-1');
+    const withArg = await run('{ family { timezone(id: "other") } }', { familyId: 'family-1' });
+    expect(withArg.errors?.[0]?.message).toMatch(/unknown argument/i);
+  });
+
+  it('is not readable before there is a family, and the database is not asked', async () => {
+    expect(codeOf(await run('{ family { timezone } }'))).toBe('FORBIDDEN');
+    expect(getFamilyTimezone).not.toHaveBeenCalled();
+  });
+});
+
+describe('setTimezone', () => {
+  const set = (zone: string) => `mutation { setTimezone(timezone: "${zone}") { id timezone } }`;
+
+  it('sets the zone for an unlocked parent, in the caller’s family, and returns the family', async () => {
+    getFamily.mockResolvedValue({ id: 'family-1', name: 'Giannell' });
+    getFamilyTimezone.mockResolvedValue('Asia/Tokyo');
+    const result = await run(set('Asia/Tokyo'), { familyId: 'family-1', isParent: true });
+    expect(result.data).toEqual({ setTimezone: { id: 'family-1', timezone: 'Asia/Tokyo' } });
+    expect(setFamilyTimezone).toHaveBeenCalledWith(db, 'family-1', 'Asia/Tokyo');
+  });
+
+  it('is FORBIDDEN for a family member who has not unlocked, and before there is a family, without touching the database', async () => {
+    expect(codeOf(await run(set('Asia/Tokyo'), { familyId: 'family-1', isParent: false }))).toBe('FORBIDDEN');
+    expect(codeOf(await run(set('Asia/Tokyo')))).toBe('FORBIDDEN');
+    expect(setFamilyTimezone).not.toHaveBeenCalled();
+  });
+
+  it('is BAD_USER_INPUT for a zone that is not recognised', async () => {
+    setFamilyTimezone.mockRejectedValue(new InvalidTimezoneError());
+    const result = await run(set('Mars/Phobos'), { familyId: 'family-1', isParent: true });
+    expect(codeOf(result)).toBe('BAD_USER_INPUT');
+    expect(result.errors?.[0]?.message).toBe('Time zone not recognized');
+    expect(getFamily).not.toHaveBeenCalled();
+  });
+
+  it('lets any other failure through as a server error, not as bad input', async () => {
+    setFamilyTimezone.mockRejectedValue(new Error('connection lost'));
+    const result = await run(set('Asia/Tokyo'), { familyId: 'family-1', isParent: true });
+    expect(codeOf(result)).not.toBe('BAD_USER_INPUT');
+    expect(result.errors).toHaveLength(1);
+  });
+});
+
 describe('deleteProfile', () => {
-  const del = 'mutation { deleteProfile(profileId: "p-1") }';
+  const del ='mutation { deleteProfile(profileId: "p-1") }';
 
   it('deletes the profile for an unlocked parent, in the caller’s family', async () => {
     deleteProfile.mockResolvedValue(true);
