@@ -31,7 +31,7 @@ Their **CSV import still works**, so that's the migration path, and it's a stron
 | Domain | `books.gnlfamily.com` (hosted zone `<HOSTED_ZONE_ID>` already exists) |
 | Database | **Aurora DSQL** — serverless Postgres, permanent free tier, scale-to-zero |
 | API | **GraphQL in one Lambda** — Pothos (code-first schema) + Apollo Server 5 |
-| Frontend | **Vite + React Router v7 SPA** on S3 + CloudFront |
+| Frontend | **Vite + React Router 8 SPA** on S3 + CloudFront |
 | Auth | **Cognito** user pool — web sign-in *and* Alexa account linking (OAuth2) |
 | Book metadata | **Hardcover GraphQL**, behind a swappable `BookSource` interface |
 | Voice | ASK custom skill (development stage), **adult-only** (kids are refused in Amazon Kids mode); reader resolved by `personId` if available, otherwise "who's reading?" |
@@ -56,7 +56,7 @@ gnl-books/
 │   ├── core/               # domain logic, Kysely queries, DSQL connection, Hardcover client, CSV
 │   ├── graphql/            # Pothos schema + Apollo Server Lambda handler
 │   ├── alexa/              # ask-sdk-core handlers + interaction model JSON
-│   ├── web/                # Vite + React Router v7 SPA
+│   ├── web/                # Vite + React Router 8 SPA
 │   └── widget/             # APL widget document + Data Store updater
 └── db/migrations/          # numbered .sql files
 ```
@@ -392,7 +392,7 @@ Rules in `packages/core/src/csv.ts` (built; `Average Rating`, `Bookshelves with 
 
 ## Web app — `packages/web`
 
-Vite + **React Router v7** in framework mode with `ssr: false` → static build → S3, fronted by CloudFront with OAC. A CloudFront Function on the default behavior serves `/index.html` for paths without a file extension, so client-side routing works. It is deliberately not distribution-wide 403/404 error responses, which would also rewrite errors from the `/graphql` origin into HTML.
+Vite (scaffolded with `create-vite`, `react-ts`) + **React Router 8** as a plain client-side router (`createBrowserRouter`; *decided 2026-11-09, replacing framework mode: data comes through Apollo, so route loaders would add a layer for little*) → static build → S3, fronted by CloudFront with OAC. A CloudFront Function on the default behavior serves `/index.html` for paths without a file extension, so client-side routing works. It is deliberately not distribution-wide 403/404 error responses, which would also rewrite errors from the `/graphql` origin into HTML.
 
 - **Apollo Client**, paired with the Apollo Server choice — normalized cache, and the client most teams actually use. Typed hooks come from **`graphql-codegen`** (`client-preset`, or `typescript-react-apollo` for generated hooks). This is where the GraphQL learning really lands — end-to-end type safety from Postgres column to React prop.
 - `react-oidc-context` for Cognito Hosted UI + PKCE.

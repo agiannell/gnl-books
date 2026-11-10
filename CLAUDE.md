@@ -56,9 +56,9 @@ A family reading tracker with three clients (web SPA, Alexa skill, Echo Show wid
 
 ## Working conventions
 
-- Install with `yarn add`; initialize with the ecosystem's own tool (`cdk init`, `create-react-router`, `ask new`). Don't hand-type version ranges into `package.json`. Use `npm init` for a bare manifest, not `yarn init`.
+- Install with `yarn add`; initialize with the ecosystem's own tool (`cdk init`, `create-vite`, `ask new`). Don't hand-type version ranges into `package.json`. Use `npm init` for a bare manifest, not `yarn init`.
 - Pins that are deliberate: TypeScript `~6.0.3` (fallback `~5.9.x` if tools complain; 7 is unconfirmed and has proven incompatible in practice), `@types/node` 24 to match the Node 24 Lambda runtime. Say why when pinning on purpose.
-- One TypeScript version across the whole repo, owned by the root `package.json`. Scaffolders (`cdk init`, `create-react-router`) pin their own, often 7: remove `typescript` and `@types/node` from the workspace after generating it, so there is no second copy. Verify with `yarn why typescript` or `grep '^"\?typescript@' yarn.lock`.
+- One TypeScript version across the whole repo, owned by the root `package.json`. Scaffolders (`cdk init`, `create-vite`) pin their own, often 7: remove `typescript` and `@types/node` from the workspace after generating it, so there is no second copy. Verify with `yarn why typescript` or `grep '^"\?typescript@' yarn.lock`.
 - Vitest is the test runner in every workspace, including `infra` (the CDK template's Jest is removed). Vitest 5 needs `vite` as a devDependency, which Yarn classic doesn't install for you.
 - Write files with the Write/Edit tools, never Bash heredocs or redirects, one file per call, with a short what/why above each change.
 - The repo is public: keep AWS account IDs, hosted-zone IDs, and personal details out of committed files. Use the `<AWS_ACCOUNT_ID>` / `<HOSTED_ZONE_ID>` placeholders; real values come from the deploy environment and `cdk.context.json`.

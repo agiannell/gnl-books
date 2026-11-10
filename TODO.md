@@ -112,8 +112,9 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 ## 6 — Shelves in the SPA
 
-- [ ] **Decide:** React Router v7 (per `PLAN.md`) or 8.5.1 (current major, needs Node >= 22.22). What changed in 8 is unchecked
-- [ ] `packages/web` via `create-react-router`, framework mode, `ssr: false`
+- [x] **Decided 2026-11-09: React Router 8.5.1**, as a plain client-side router (not framework mode). Latest major wherever possible; the only reason to hold back would have been Vite support, and `@react-router/dev` 8.5.1 allows `vite ^7 || ^8` (we have 8.3.7). Node 24 meets its `>=22.22`. Checked: `react-router` 8.5.1 still exports `createBrowserRouter`, `RouterProvider`, `Outlet`, `Link`, and there is no separate `react-router-dom`
+- [x] `packages/web` from `create-vite` 9.3.4 (`react-ts` template, `--no-eslint` so it uses Oxlint) plus `yarn add react-router`. Framework mode dropped: data comes through Apollo Client rather than route loaders, so it would add a layer for little. Adjusted from the scaffold: scoped name `@gnl-books/web`, a `typecheck` script (`tsc -b`), the scaffolder's TypeScript 7 and `@types/node` removed so the root owns one TypeScript (`~6.0.3`), root Vite bumped so there is one copy (8.3.7), demo content replaced with a route table (`src/routes.tsx`, exported without creating a router so tests can use `createMemoryRouter(routes)`), an `App` frame with an `Outlet`, and a placeholder `Home`. Typecheck, build, lint and a render of `/` and an unknown path pass
+- [ ] Still to do in the scaffold: no test setup for components yet (needs jsdom and Testing Library in the `packages` Vitest project), a real not-found route (an unknown path shows React Router's default error page), the favicon is still Vite's
 - [ ] Routes: `/`, `/p/:profileId`, `/p/:profileId/book/:bookId`, `/search`, `/settings`
 - [ ] Ratings, reviews, dates, progress, goal ring
 - [ ] Touch-first and responsive — it doubles as the Echo Show browser fallback
@@ -147,7 +148,7 @@ Verify every package version against the registry (`npm view <pkg>`) as it's add
 
 ## Open questions
 
-- [ ] React Router v7 vs 8 (blocks step 6)
+- [x] React Router v7 vs 8: decided, 8.5.1 (see step 6)
 - [ ] Echo Show 15 widget feasibility (that's what step 8's spike is for)
 - [ ] Confirm in CloudWatch that a Kids-mode refusal never reaches the Lambda — expected, low stakes
 - [ ] Whether a development-stage skill needs a privacy policy URL for `personId` (not needed in the spike; publishing would require one)

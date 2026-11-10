@@ -1,0 +1,13 @@
+/* The template's demo styling is gone; the real design comes with the first screens. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  padding: 1rem;
+}

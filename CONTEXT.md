@@ -52,7 +52,7 @@ A throwaway "Reading Check" skill was built in the developer console and tested 
 ## Open questions
 
 1. ~~Can a child use voice on a shared adult device?~~ **Resolved (2026-11-03): no.** A child asking an adult-profile Dot to open the skill got the generic refusal; an adult saying the identical phrase on the same Dot worked (`personId` and `deviceId` present). Voice is adult-only; kids use the web app and the Show 15 touch widget. Remaining nit: confirm in CloudWatch that no request reaches the Lambda in the refused case. Consequence: Alexa (step 8) is lower value, so keep it optional and last.
-2. **React Router version.** `PLAN.md` says v7, but the registry's current major is 8.5.1 (needs Node >= 22.22). What changed in 8 hasn't been checked.
+2. ~~**React Router version.**~~ **Resolved (2026-11-09): 8.5.1**, as a plain client-side router on a `create-vite` `react-ts` app (not framework mode). Latest versions wherever possible; Vite 8 is supported.
 3. **Echo Show 15 widget feasibility** is unverified; plan is a hello-world spike before real widget work.
 4. **Whether a development-stage skill needs a privacy policy URL** to receive `personId` was not needed in the spike; publishing would require one.
 5. Whether `persistentEndpointId` is exposed to custom skills and more stable than `deviceId` (now low priority since `alexa_devices` was demoted).
