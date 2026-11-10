@@ -13,12 +13,16 @@ import { fakeApi } from './fakeApi.ts';
 const ME = { data: { me: { __typename: 'Account', familyId: 'f-1' } } };
 
 // The settings page loads the readers once unlocked; these tests are about the lock, so it is an empty family.
-const readers = { data: { family: { __typename: 'Family', name: 'The Gnls', profiles: [] } } };
+const readers = { data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: [] } } };
 const parentCalls = (api: ReturnType<typeof fakeApi>) =>
   api.calls.map((c) => c.operationName).filter((name) => /Parent/.test(name));
 
 const renderSettings = (handlers: Parameters<typeof fakeApi>[0], session = createParentSession()) => {
-  const api = fakeApi({ SettingsProfiles: readers, ...handlers });
+  const api = fakeApi({
+    SettingsProfiles: readers,
+    SettingsGoals: { data: { family: { __typename: 'Family', id: 'f-1', profiles: [] } } },
+    ...handlers,
+  });
   const client = createApolloClient({
     getAccessToken: async () => 'tok',
     getParentToken: session.getToken,
@@ -321,7 +325,7 @@ describe('getting to the screen', () => {
   it('links to /settings from the profile picker', async () => {
     const api = fakeApi({
       Me: ME,
-      Family: { data: { family: { __typename: 'Family', name: 'The Gnls', profiles: [] } } },
+      Family: { data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: [] } } },
     });
     const session = createParentSession();
     const client = createApolloClient({ getAccessToken: async () => 'tok', getParentToken: session.getToken, fetch: api.fetch });

@@ -12,6 +12,7 @@ const family = {
   data: {
     family: {
       __typename: 'Family',
+      id: 'f-1',
       name: 'The Gnls',
       profiles: [{ __typename: 'Profile', id: 'p-1', name: 'Pat', emoji: null, color: null }],
     },
