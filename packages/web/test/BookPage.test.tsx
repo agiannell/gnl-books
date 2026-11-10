@@ -4,16 +4,27 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { createApolloClient } from '../src/apollo.ts';
+import { createParentSession } from '../src/parentSession.ts';
+import { ParentSessionProvider } from '../src/ParentSessionProvider.tsx';
 import { routes } from '../src/routes.tsx';
 import { fakeApi } from './fakeApi.ts';
 
-const renderAt = (path: string, handlers: Parameters<typeof fakeApi>[0]) => {
-  const api = fakeApi(handlers);
-  const client = createApolloClient({ getAccessToken: async () => 'tok', fetch: api.fetch });
+// Locked by default, as a child on the tablet finds it; `unlocked` starts a parent's session. The first
+// click in an unlocked session asks for a fresh token (that has its own tests), so it is answered here.
+const renewed = () => ({
+  data: { renewParentUnlock: { __typename: 'ParentUnlock', token: 'parent', expiresAt: new Date(Date.now() + 600_000).toISOString() } },
+});
+const renderAt = (path: string, handlers: Parameters<typeof fakeApi>[0], options: { unlocked?: boolean } = {}) => {
+  const api = fakeApi({ RenewParentUnlock: renewed, ...handlers });
+  const session = createParentSession();
+  if (options.unlocked) session.set({ token: 'parent', expiresAt: Date.now() + 600_000 });
+  const client = createApolloClient({ getAccessToken: async () => 'tok', getParentToken: session.getToken, fetch: api.fetch });
   const router = createMemoryRouter(routes[0]!.children!, { initialEntries: [path] });
   render(
     <ApolloProvider client={client}>
-      <RouterProvider router={router} />
+      <ParentSessionProvider session={session}>
+        <RouterProvider router={router} />
+      </ParentSessionProvider>
     </ApolloProvider>,
   );
   return api;
