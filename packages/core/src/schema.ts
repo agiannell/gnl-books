@@ -16,6 +16,7 @@ export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 export interface Accounts {
   cognito_sub: string;
   created_at: Generated<Timestamp>;
+  email: string | null;
   family_id: string;
 }
 
@@ -56,6 +57,14 @@ export interface Families {
   parent_pin_hash: string;
   pin_locked_until: Timestamp | null;
   timezone: string | null;
+}
+
+export interface JoinRequests {
+  cognito_sub: string;
+  created_at: Generated<Timestamp>;
+  email: string;
+  family_id: string;
+  id: string;
 }
 
 export interface Profiles {
@@ -112,6 +121,7 @@ export interface DB {
   alexa_devices: AlexaDevices;
   books: Books;
   families: Families;
+  join_requests: JoinRequests;
   profiles: Profiles;
   progress_events: ProgressEvents;
   reading_goals: ReadingGoals;

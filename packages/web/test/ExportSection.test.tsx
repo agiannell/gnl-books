@@ -33,6 +33,7 @@ const renderSettings = (handlers: Parameters<typeof fakeApi>[0]) => {
     SettingsProfiles: readers(PAT, SAM),
     SettingsGoals: noGoals({ id: 'p-1', name: 'Pat' }, { id: 'p-2', name: 'Sam' }),
     SettingsTimezone: { data: { family: { __typename: 'Family', id: 'f-1', timezone: 'America/Chicago' } } },
+    SettingsJoinRequests: { data: { family: { __typename: 'Family', id: 'f-1', joinRequests: [] } } },
     RenewParentUnlock: renewed,
     ...handlers,
   });

@@ -37,6 +37,7 @@ const renderSettings = (handlers: Parameters<typeof fakeApi>[0]) => {
   const api = fakeApi({
     SettingsProfiles: readers,
     SettingsTimezone: { data: { family: { __typename: 'Family', id: 'f-1', timezone: 'America/Chicago' } } },
+    SettingsJoinRequests: { data: { family: { __typename: 'Family', id: 'f-1', joinRequests: [] } } },
     RenewParentUnlock: renewed,
     ...handlers,
   });

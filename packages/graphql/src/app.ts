@@ -5,6 +5,7 @@ import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-sec
 import { createDb, createHardcoverSource, type BookSource } from '@gnl-books/core';
 import { createCognitoVerifier } from './auth';
 import { buildContext, type Context } from './context';
+import { createCognitoEmailLookup } from './identity';
 import { createParentTokens, type ParentTokens } from './parentToken';
 import { schema } from './schema';
 
@@ -127,10 +128,13 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
     userPoolId: required(env, 'USER_POOL_ID'),
     clientId: [required(env, 'USER_POOL_WEB_CLIENT_ID')],
   });
+  const emails = createCognitoEmailLookup({ userPoolId: required(env, 'USER_POOL_ID') });
+  // Lives as long as the container, so the account-email backfill runs once per user per container.
+  const checkedEmails = new Set<string>();
   const server = createServer();
   return {
     server,
     context: (authorization: string | undefined, parentToken?: string | undefined) =>
-      buildContext({ db, verifier, parentTokens, books, authorization, parentToken }),
+      buildContext({ db, verifier, emails, checkedEmails, parentTokens, books, authorization, parentToken }),
   };
 }

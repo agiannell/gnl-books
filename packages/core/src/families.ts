@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
-import type { Db } from './db';
+import { withTransaction, type Db } from './db';
+import { normalizeEmail } from './joinRequests';
 
 /**
  * The zone a family's calendar dates are kept in when it has not set one. The
@@ -38,6 +39,30 @@ export async function findFamilyIdForAccount(
     .where('cognito_sub', '=', cognitoSub)
     .executeTakeFirst();
   return row?.family_id;
+}
+
+/**
+ * Stores the account's verified email if it has none yet, so a new user can name this parent to ask to
+ * join. Accounts made before emails were kept (or by hand) get theirs the first time they are used.
+ * `lookup` is only called for an account that has no email, and an email already stored is never replaced.
+ */
+export async function backfillAccountEmail(
+  db: Db,
+  cognitoSub: string,
+  lookup: () => Promise<string | null>,
+): Promise<void> {
+  const account = await db.selectFrom('accounts').select('email').where('cognito_sub', '=', cognitoSub).executeTakeFirst();
+  if (!account || account.email !== null) return;
+  const email = await lookup();
+  if (!email) return;
+  await withTransaction(db, (trx) =>
+    trx
+      .updateTable('accounts')
+      .set({ email: normalizeEmail(email) })
+      .where('cognito_sub', '=', cognitoSub)
+      .where('email', 'is', null)
+      .execute(),
+  );
 }
 
 /** The zone the family's dates are kept in: the one it chose, else the default. */

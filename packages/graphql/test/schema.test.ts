@@ -26,6 +26,10 @@ const {
   getBook,
   removeGoal,
   deleteProfile,
+  requestToJoin,
+  listJoinRequests,
+  approveJoinRequest,
+  denyJoinRequest,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   getFamilyTimezone: vi.fn(),
@@ -50,6 +54,10 @@ const {
   getBook: vi.fn(),
   removeGoal: vi.fn(),
   deleteProfile: vi.fn(),
+  requestToJoin: vi.fn(),
+  listJoinRequests: vi.fn(),
+  approveJoinRequest: vi.fn(),
+  denyJoinRequest: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -80,6 +88,10 @@ vi.mock('@gnl-books/core', async () => {
     getBook,
     removeGoal,
     deleteProfile,
+    requestToJoin,
+    listJoinRequests,
+    approveJoinRequest,
+    denyJoinRequest,
   };
 });
 import {
@@ -89,6 +101,7 @@ import {
   InvalidTimezoneError,
   ProgressRejectedError,
   LastProfileError,
+  TooManyFamiliesError,
   TooManyProfilesError,
 } from '@gnl-books/core';
 
@@ -106,6 +119,7 @@ const run =(source: string, context: Partial<Context> = {}) =>
     contextValue: {
       db,
       cognitoSub: 'sub-123',
+      verifiedEmail: async () => 'caller@example.test',
       familyId: null,
       isParent: false,
       parentUnlockStartedAt: null,
@@ -139,6 +153,10 @@ beforeEach(() => {
   getBook.mockReset();
   removeGoal.mockReset();
   deleteProfile.mockReset();
+  requestToJoin.mockReset();
+  listJoinRequests.mockReset();
+  approveJoinRequest.mockReset();
+  denyJoinRequest.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -195,6 +213,8 @@ describe('createFamily', () => {
     expect(result).toEqual({ data: { createFamily: { id: 'family-1', name: 'Giannell' } } });
     expect(bootstrapFamily).toHaveBeenCalledWith(db, {
       cognitoSub: 'sub-from-token',
+      // The verified email, so a later user can name this parent to ask to join.
+      email: 'caller@example.test',
       familyName: 'Giannell',
       parentName: 'Anthony',
       pin: '4821',
@@ -233,6 +253,19 @@ describe('createFamily', () => {
     bootstrapFamily.mockRejectedValue(new AlreadyBootstrappedError());
     const result = await run(mutation());
     expect(result.errors?.[0]?.extensions?.code).toBe('CONFLICT');
+  });
+
+  it('still makes the family when Cognito has no verified email, just without one on the account', async () => {
+    bootstrapFamily.mockResolvedValue({ id: 'family-1', name: 'Giannell' });
+    await run(mutation(), { verifiedEmail: async () => null });
+    expect(bootstrapFamily).toHaveBeenCalledWith(db, expect.objectContaining({ email: null }));
+  });
+
+  it('reports a full app as LIMIT_REACHED', async () => {
+    bootstrapFamily.mockRejectedValue(new TooManyFamiliesError());
+    const result = await run(mutation());
+    expect(result.errors?.[0]?.extensions?.code).toBe('LIMIT_REACHED');
+    expect(result.errors?.[0]?.message).toBe('The app is not taking new families right now');
   });
 
   it('does not dress an unexpected failure up as a user error', async () => {
@@ -1087,6 +1120,109 @@ describe('setTimezone', () => {
     const result = await run(set('Asia/Tokyo'), { familyId: 'family-1', isParent: true });
     expect(codeOf(result)).not.toBe('BAD_USER_INPUT');
     expect(result.errors).toHaveLength(1);
+  });
+});
+
+describe('requestToJoin', () => {
+  const ask = (email = 'parent@example.test') => `mutation { requestToJoin(parentEmail: "${email}") }`;
+
+  it('records the request for the verified caller, naming the parent’s email', async () => {
+    requestToJoin.mockResolvedValue(undefined);
+    const result = await run(ask(), { cognitoSub: 'sub-from-token' });
+    expect(result).toEqual({ data: { requestToJoin: true } });
+    expect(requestToJoin).toHaveBeenCalledWith(db, {
+      cognitoSub: 'sub-from-token',
+      email: 'caller@example.test',
+      parentEmail: 'parent@example.test',
+    });
+  });
+
+  it('trims the parent’s email', async () => {
+    requestToJoin.mockResolvedValue(undefined);
+    await run(ask('  parent@example.test  '));
+    expect(requestToJoin).toHaveBeenCalledWith(db, expect.objectContaining({ parentEmail: 'parent@example.test' }));
+  });
+
+  // The requester's email is not an argument, so a caller cannot ask as someone else.
+  it('takes no email for the requester from the client', async () => {
+    const result = await run('mutation { requestToJoin(parentEmail: "p@example.test", email: "x@example.test") }');
+    expect(result.errors?.[0]?.message).toMatch(/Unknown argument/);
+    expect(requestToJoin).not.toHaveBeenCalled();
+  });
+
+  it('answers true whether or not core found a family, so nobody can probe for emails', async () => {
+    requestToJoin.mockResolvedValue(undefined);
+    const real = await run(ask('real@example.test'));
+    const fake = await run(ask('nobody@example.test'));
+    expect(real).toEqual(fake);
+  });
+
+  it.each(['', '   ', 'no-at-sign', 'a@b', 'two@@example.test', 'sp ace@example.test', `${'x'.repeat(250)}@example.test`])(
+    'rejects the email %j with BAD_USER_INPUT before touching the database',
+    async (email) => {
+      expect(codeOf(await run(ask(email)))).toBe('BAD_USER_INPUT');
+      expect(requestToJoin).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is BAD_USER_INPUT when the caller has no verified email of their own', async () => {
+    const result = await run(ask(), { verifiedEmail: async () => null });
+    expect(codeOf(result)).toBe('BAD_USER_INPUT');
+    expect(requestToJoin).not.toHaveBeenCalled();
+  });
+
+  it('is FORBIDDEN for someone who already has a family', async () => {
+    expect(codeOf(await run(ask(), { familyId: 'family-1' }))).toBe('FORBIDDEN');
+    expect(requestToJoin).not.toHaveBeenCalled();
+  });
+});
+
+describe('join requests, as a parent sees them', () => {
+  const member = { familyId: 'family-1', isParent: true };
+  const request = { id: 'r-1', email: 'new@example.test', requestedAt: new Date('2026-11-11T12:00:00Z') };
+
+  it('lists the family’s open requests for an unlocked parent', async () => {
+    getFamily.mockResolvedValue({ id: 'family-1', name: 'Giannell' });
+    listJoinRequests.mockResolvedValue([request]);
+    const result = await run('{ family { joinRequests { id email requestedAt } } }', member);
+    expect(result.data).toEqual({
+      family: { joinRequests: [{ id: 'r-1', email: 'new@example.test', requestedAt: '2026-11-11T12:00:00.000Z' }] },
+    });
+    expect(listJoinRequests).toHaveBeenCalledWith(db, 'family-1');
+  });
+
+  it('keeps them from a family member who has not unlocked with the PIN', async () => {
+    getFamily.mockResolvedValue({ id: 'family-1', name: 'Giannell' });
+    const result = await run('{ family { id joinRequests { id } } }', { familyId: 'family-1', isParent: false });
+    expect(codeOf(result)).toBe('FORBIDDEN');
+    expect(listJoinRequests).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['approve', 'approveJoinRequest', approveJoinRequest],
+    ['deny', 'denyJoinRequest', denyJoinRequest],
+  ])('lets an unlocked parent %s a request, in the caller’s family only', async (_label, field, mock) => {
+    mock.mockResolvedValue(true);
+    expect((await run(`mutation { ${field}(requestId: "r-1") }`, member)).data).toEqual({ [field]: true });
+    expect(mock).toHaveBeenCalledWith(db, 'family-1', 'r-1');
+  });
+
+  it.each([
+    ['approve', 'approveJoinRequest', approveJoinRequest],
+    ['deny', 'denyJoinRequest', denyJoinRequest],
+  ])('will not %s without the PIN unlock, or before there is a family', async (_label, field, mock) => {
+    const mutation = `mutation { ${field}(requestId: "r-1") }`;
+    expect(codeOf(await run(mutation, { familyId: 'family-1', isParent: false }))).toBe('FORBIDDEN');
+    expect(codeOf(await run(mutation))).toBe('FORBIDDEN');
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['approve', 'approveJoinRequest', approveJoinRequest],
+    ['deny', 'denyJoinRequest', denyJoinRequest],
+  ])('is NOT_FOUND when there is nothing to %s', async (_label, field, mock) => {
+    mock.mockResolvedValue(false);
+    expect(codeOf(await run(`mutation { ${field}(requestId: "r-1") }`, member))).toBe('NOT_FOUND');
   });
 });
 

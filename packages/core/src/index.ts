@@ -8,7 +8,23 @@ export {
   type BookSource,
   type BookSourceErrorCode,
 } from './books/types';
-export { AlreadyBootstrappedError, bootstrapFamily, type BootstrapInput } from './bootstrap';
+export {
+  AlreadyBootstrappedError,
+  bootstrapFamily,
+  MAX_FAMILIES,
+  TooManyFamiliesError,
+  type BootstrapInput,
+} from './bootstrap';
+export {
+  approveJoinRequest,
+  denyJoinRequest,
+  listJoinRequests,
+  MAX_PENDING_REQUESTS,
+  normalizeEmail,
+  REQUEST_LIFETIME_DAYS,
+  requestToJoin,
+  type JoinRequest,
+} from './joinRequests';
 export { hashPin, PIN_PATTERN, verifyPin } from './pin';
 export {
   attemptParentUnlock,
@@ -19,6 +35,7 @@ export {
   type UnlockResult,
 } from './unlock';
 export {
+  backfillAccountEmail,
   DEFAULT_TIMEZONE,
   findFamilyIdForAccount,
   getFamily,

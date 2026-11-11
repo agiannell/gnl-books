@@ -11,6 +11,7 @@ vi.mock('@gnl-books/core', async () => {
   return {
     ...actual,
     findFamilyIdForAccount,
+    backfillAccountEmail: vi.fn(),
     getFamily: vi.fn(),
     bootstrapFamily,
     attemptParentUnlock,
@@ -37,6 +38,8 @@ const verifier = {
 // A real signer, so the access tests exercise the real token rules.
 const parentTokens = createParentTokens('s'.repeat(48));
 
+const emails = { verifiedEmail: async () => null };
+
 // Records every catalog call, so a refused request can be shown never to have reached it.
 const catalogCalls = vi.fn();
 const books = {
@@ -54,7 +57,7 @@ async function request(init: { headers?: Record<string, string>; method?: string
       search: '',
       body: init.body,
     },
-    context: () => buildContext({ db: {} as Db, verifier, parentTokens, books, authorization, parentToken: init.headers?.['x-parent-token'] }),
+    context: () => buildContext({ db: {} as Db, verifier, emails, parentTokens, books, authorization, parentToken: init.headers?.['x-parent-token'] }),
   });
   return { status: res.status ?? 200, body: res.body.kind === 'complete' ? res.body.string : '' };
 }
@@ -81,6 +84,9 @@ describe('unauthenticated access', () => {
     ['setting the time zone', { query: 'mutation { setTimezone(timezone: "UTC") { id } }' }],
     ['exporting a shelf',{ query: 'mutation { exportGoodreadsCsv(profileId: "p") }' }],
     ['removing a book from a shelf', { query: 'mutation { removeFromShelf(shelfEntryId: "e") }' }],
+    ['asking to join a family', { query: 'mutation { requestToJoin(parentEmail: "p@example.test") }' }],
+    ['approving a join request', { query: 'mutation { approveJoinRequest(requestId: "r") }' }],
+    ['denying a join request', { query: 'mutation { denyJoinRequest(requestId: "r") }' }],
     ['setting a goal', { query: 'mutation { setGoal(profileId: "p", year: 2026, target: 5) { year } }' }],
     ['finishing a book', { query: 'mutation { finishBook(shelfEntryId: "e") { id } }' }],
     ['shelving a book', { query: 'mutation { addToShelf(profileId: "p", bookId: "b", shelf: READ) { id } }' }],
@@ -111,7 +117,7 @@ describe('unauthenticated access', () => {
           search: '',
           body: { query: '{ me { familyId } }' },
         },
-        context: () => buildContext({ db: {} as Db, verifier, parentTokens, books, authorization: undefined }),
+        context: () => buildContext({ db: {} as Db, verifier, emails, parentTokens, books, authorization: undefined }),
       });
       const body = res.body.kind === 'complete' ? res.body.string : '';
       expect(body).toContain('UNAUTHENTICATED');

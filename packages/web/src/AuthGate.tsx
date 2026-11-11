@@ -22,6 +22,10 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         </Heading>
         {auth.error && <Alert>Sign-in failed: {auth.error.message}</Alert>}
         <Text size="3">Sign in to see your family’s library.</Text>
+        <Text size="2" color="gray">
+          New here? Choose “Sign up” on the next page. You can set up your own family, or ask a parent to let you join
+          theirs.
+        </Text>
         <Button type="button" size="3" onClick={() => void signIn()}>
           Sign in
         </Button>
