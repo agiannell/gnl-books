@@ -175,6 +175,18 @@ Not planned: voice does not work for kids' voices or kids' devices, so it adds l
 
 ---
 
+## Infra housekeeping
+
+- [x] **The API connects to DSQL as a limited database role, not `admin`.** `provisionAppRole` (`packages/core/src/appRole.ts`) runs from the migration runner after the migrations: it creates `gnl_books_app` (`login`), maps the API Lambda's IAM role to it (the ARN is passed to the runner as `DSQL_APP_ROLE_ARN`, so it never lives in the repo), unmaps any other IAM role (a replaced Lambda role loses access), and grants `select, insert, update, delete` on every table, now and later (`alter default privileges`), minus `schema_migrations`. The API gets `grantConnect` (`dsql:DbConnect`) and `DSQL_USER=gnl_books_app`; only the runner keeps `dsql:DbConnectAdmin`. Each step is one statement in its own transaction and safe to repeat. The IAM mapping is not a numbered migration because it needs a deploy-time ARN.
+  - Tried on a scratch cluster first: as the role, every app query works (insert, `for update`, upsert, `at time zone`, core's bootstrap, shelving, progress and time zone code); create/drop/alter table, create index, create role, mapping IAM roles, reading or writing `schema_migrations` and granting itself the ledger are all refused. `grant usage on schema public` is unsupported ("system entity") and not needed. A table created later is covered by the default privileges.
+  - A first attempt looked like DSQL refused the role. It was a bug in my credential-splitting in the test command (the temporary credentials are tab-separated), not a DSQL limit.
+  - Tests: 22 unit tests for `provisionAppRole` (statement order, one statement per transaction, idempotence, stale unmapping, input patterns since the values land in SQL text), 5 live tests (`appRole.live.test.ts`, a throwaway role, cleans up), and CDK assertions that only the runner has the admin action, the API has only `DbConnect`, the runner receives the API role's ARN, and the trigger waits for the API function. Mutation-checked.
+  - Deploy note: CloudFormation updates the API function before the trigger maps its role, so API calls can fail for the seconds in between. If provisioning fails, the deploy fails and the function rolls back to the admin setup.
+- [ ] Tighten the `github-deploy` role's trust policy (shared with other projects: the user's call)
+- [ ] A second adult Cognito user (needs their email)
+
+---
+
 ## Open questions
 
 - [x] React Router v7 vs 8: decided, 8.5.1 (see step 6)
@@ -187,6 +199,6 @@ Not planned: voice does not work for kids' voices or kids' devices, so it adds l
 - Voice is adult-only. A child got the generic refusal on an adult-profile Dot; an adult saying the same phrase on the same Dot was recognized, with `personId` and `deviceId` present
 - `personId` works for adults once the skill declares Skills Personalization
 - `alexa_devices` is demoted to labelling only — not part of reader resolution
-- DSQL in CDK: use the alpha L2 `Cluster` from `@aws-cdk/aws-dsql-alpha`. It provides `grantConnect` / `grantConnectAdmin` and defaults to Retain. Still open for step 2: which grant the app Lambdas get, and how DSQL custom database roles work
+- DSQL in CDK: use the alpha L2 `Cluster` from `@aws-cdk/aws-dsql-alpha`. It provides `grantConnect` / `grantConnectAdmin` and defaults to Retain. The runner gets `grantConnectAdmin`; the API gets `grantConnect` and a limited database role (see Infra housekeeping)
 - No Goodreads API. CSV export is the migration path
 - TypeScript held at `~6.0.3`; `@types/node` pinned to 24 to match the Lambda runtime

@@ -59,10 +59,9 @@ describe('migrations', () => {
     });
   });
 
-  // DDL runs as the admin role, so the runner needs the admin connect action.
-  // The API has it too until custom database roles exist (see TODO.md); this
-  // pins the list so a third function can't pick it up unnoticed.
-  it('lets only the runner and the API connect as admin', () => {
+  // DDL, role creation and IAM mapping run as the admin role. This pins the
+  // list so no other function can pick the admin connect action up unnoticed.
+  it('lets only the runner connect as admin', () => {
     const policies = template.findResources('AWS::IAM::Policy', {
       Properties: {
         PolicyDocument: {
@@ -73,13 +72,43 @@ describe('migrations', () => {
     const roles = Object.values(policies).flatMap((p) =>
       (p.Properties.Roles as { Ref: string }[]).map((r) => r.Ref),
     );
-    expect(roles).toHaveLength(2);
-    expect(roles).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('MigrationRunner'),
-        expect.stringContaining('GraphqlFunction'),
-      ]),
+    expect(roles).toEqual([expect.stringContaining('MigrationRunner')]);
+  });
+
+  it('lets the API connect only as the limited role, never as admin', () => {
+    const policies = template.findResources('AWS::IAM::Policy', {
+      Properties: {
+        PolicyDocument: {
+          Statement: Match.arrayWith([Match.objectLike({ Action: 'dsql:DbConnect' })]),
+        },
+      },
+    });
+    const roles = Object.values(policies).flatMap((p) =>
+      (p.Properties.Roles as { Ref: string }[]).map((r) => r.Ref),
     );
+    expect(roles).toEqual([expect.stringContaining('GraphqlFunction')]);
+  });
+
+  it('tells the API which database role to use, and the runner which role to create', () => {
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ DSQL_USER: 'gnl_books_app' }) },
+    });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ DSQL_APP_USER: 'gnl_books_app' }) },
+    });
+  });
+
+  it("maps the API's IAM role to the database role, and only after that role exists", () => {
+    const functions = template.findResources('AWS::Lambda::Function');
+    const [apiId] = Object.entries(functions).find(([id]) => id.startsWith('GraphqlFunction')) ?? [];
+    const [, runner] = Object.entries(functions).find(([id]) => id.startsWith('MigrationRunner')) ?? [];
+    const apiRole = functions[apiId!].Properties.Role['Fn::GetAtt'][0];
+    expect(runner!.Properties.Environment.Variables.DSQL_APP_ROLE_ARN).toEqual({
+      'Fn::GetAtt': [apiRole, 'Arn'],
+    });
+    template.hasResource('Custom::Trigger', {
+      DependsOn: Match.arrayWith([Match.stringLikeRegexp('GraphqlFunction')]),
+    });
   });
 
   it('invokes the runner on deploy, and again whenever its code changes', () => {

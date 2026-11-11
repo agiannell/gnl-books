@@ -54,6 +54,7 @@ A family reading tracker with three clients (web SPA, Alexa skill, Echo Show wid
 - Concurrency is optimistic: `core` opens every transaction through `withTransaction()` (`packages/core/src/db.ts`), which wraps Kysely's `db.transaction().execute()` in `withRetry()`. DSQL reports conflicts as `error.code` `OC000` / `OC001` / `40001`, and `isRetryable` reuses the connector's `isOCCError`. The connector's own `pool.transaction()` is deliberately not used, since Kysely issues its own BEGIN/COMMIT. Transaction logic must be idempotent.
 - Migrations: one DDL statement per transaction, DDL separate from DML, retry `OC001`. Use `CREATE INDEX ASYNC`. No triggers, PL/pgSQL, temp tables, or `TRUNCATE`. Max 3,000 rows modified per transaction.
 - Connect with the official `@aws/aurora-dsql-node-postgres-connector`; treat connections as disposable.
+- The API Lambda connects as the limited database role `gnl_books_app` (`DSQL_USER`), which can read and write rows but not change the schema; only the migration runner connects as `admin`. After the migrations, the runner calls `provisionAppRole` (`packages/core/src/appRole.ts`), which creates the role, maps the API's IAM role to it, and grants row access on every table except `schema_migrations`. A new table needs no extra grant (default privileges); a new kind of access does. `GRANT USAGE ON SCHEMA public` is unsupported on DSQL and not needed. Locally and in the live tests `DSQL_USER` is unset, so they connect as `admin`.
 
 ## Working conventions
 
