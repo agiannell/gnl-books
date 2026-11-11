@@ -241,6 +241,41 @@ export const CREATE_FAMILY = gql`
   }
 `;
 
+// A signed-in user with no family asks to join the one of the parent with this email. The API answers
+// the same whether or not the email belongs to a family, so the page cannot say which it was.
+export const REQUEST_TO_JOIN = gql`
+  mutation RequestToJoin($parentEmail: String!) {
+    requestToJoin(parentEmail: $parentEmail)
+  }
+`;
+
+// Parent-only: the open requests to join this family.
+export const SETTINGS_JOIN_REQUESTS = gql`
+  query SettingsJoinRequests {
+    family {
+      id
+      joinRequests {
+        id
+        email
+        requestedAt
+      }
+    }
+  }
+`;
+
+// Parent-only: approving lets the person in as an adult of the family; denying deletes the request.
+export const APPROVE_JOIN_REQUEST = gql`
+  mutation ApproveJoinRequest($requestId: ID!) {
+    approveJoinRequest(requestId: $requestId)
+  }
+`;
+
+export const DENY_JOIN_REQUEST = gql`
+  mutation DenyJoinRequest($requestId: ID!) {
+    denyJoinRequest(requestId: $requestId)
+  }
+`;
+
 // Parent-only: the API refuses it without the unlock token. Takes the book off one reader's shelf, with
 // its rating, review and reading history; the book stays in the library for everyone else.
 export const REMOVE_FROM_SHELF = gql`
@@ -320,6 +355,10 @@ export interface SettingsGoalsData {
 
 export interface SettingsTimezoneData {
   family: { id: string; timezone: string };
+}
+
+export interface SettingsJoinRequestsData {
+  family: { id: string; joinRequests: { id: string; email: string; requestedAt: string }[] };
 }
 
 export interface FamilyData {

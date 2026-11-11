@@ -7,6 +7,7 @@ import {
   PROFILE,
   SEARCH_BOOKS,
   SETTINGS_GOALS,
+  SETTINGS_JOIN_REQUESTS,
   SETTINGS_PROFILES,
   SETTINGS_TIMEZONE,
 } from '../src/queries.ts';
@@ -54,6 +55,7 @@ describe('the queries that read the family', () => {
     ['SettingsProfiles', SETTINGS_PROFILES],
     ['SettingsGoals', SETTINGS_GOALS],
     ['SettingsTimezone', SETTINGS_TIMEZONE],
+    ['SettingsJoinRequests', SETTINGS_JOIN_REQUESTS],
   ])('%s asks for the family’s id', (_name, doc) => {
     expect(familyFields(doc)).toContain('id');
   });

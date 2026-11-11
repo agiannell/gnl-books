@@ -2,6 +2,7 @@ import { Button, Flex, Heading } from '@radix-ui/themes';
 import { Link } from 'react-router';
 import ExportSection from './ExportSection.tsx';
 import GoalsSection from './GoalsSection.tsx';
+import JoinRequestsSection from './JoinRequestsSection.tsx';
 import ParentGate from './ParentGate.tsx';
 import ProfilesSection from './ProfilesSection.tsx';
 import TimezoneSection from './TimezoneSection.tsx';
@@ -15,6 +16,7 @@ export default function SettingsPage() {
           Settings
         </Heading>
         <ProfilesSection />
+        <JoinRequestsSection />
         <GoalsSection />
         <TimezoneSection />
         <ExportSection />

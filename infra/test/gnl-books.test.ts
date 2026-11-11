@@ -340,10 +340,28 @@ describe('auth', () => {
     });
   });
 
-  it('only lets an admin create users', () => {
+  it('lets anyone sign up, and makes them verify their email before they can sign in', () => {
     template.hasResourceProperties('AWS::Cognito::UserPool', {
-      AdminCreateUserConfig: { AllowAdminCreateUserOnly: true },
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: false },
+      AutoVerifiedAttributes: ['email'],
     });
+  });
+
+  it('lets the API read a user by sub, and only in this pool', () => {
+    const policies = template.findResources('AWS::IAM::Policy', {
+      Properties: {
+        PolicyDocument: {
+          Statement: Match.arrayWith([Match.objectLike({ Action: 'cognito-idp:AdminGetUser' })]),
+        },
+      },
+    });
+    const [policy] = Object.values(policies);
+    expect(Object.keys(policies)).toHaveLength(1);
+    expect(policy.Properties.Roles).toEqual([expect.objectContaining({ Ref: expect.stringContaining('GraphqlFunction') })]);
+    const statement = policy.Properties.PolicyDocument.Statement.find(
+      (s: { Action: unknown }) => s.Action === 'cognito-idp:AdminGetUser',
+    );
+    expect(statement.Resource).toEqual({ 'Fn::GetAtt': [expect.stringContaining('UserPool'), 'Arn'] });
   });
 
   it('signs in by email', () => {

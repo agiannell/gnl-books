@@ -20,6 +20,7 @@ const renderSettings = (handlers: Parameters<typeof fakeApi>[0]) => {
   const api = fakeApi({
     SettingsProfiles: { data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: [] } } },
     SettingsGoals: { data: { family: { __typename: 'Family', id: 'f-1', profiles: [] } } },
+    SettingsJoinRequests: { data: { family: { __typename: 'Family', id: 'f-1', joinRequests: [] } } },
     RenewParentUnlock: renewed,
     ...handlers,
   });

@@ -6,6 +6,7 @@ import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -219,9 +220,11 @@ export class GnlBooksStack extends cdk.Stack {
     // Auth. Adults sign in here; kids are profiles, not Cognito users.
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: 'gnl-books',
-      // Two adults, added by hand (`aws cognito-idp admin-create-user`). Open
-      // sign-up on a public URL would let anyone create a family.
-      selfSignUpEnabled: false,
+      // Anyone can sign up, so the app can be shown to others. A new user has no
+      // family: they create one, or ask a parent to let them join (a parent
+      // approves it, behind the PIN). The API caps the number of families, and
+      // an email must be verified before a user can sign in.
+      selfSignUpEnabled: true,
       signInAliases: { email: true },
       autoVerify: { email: true },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
@@ -302,6 +305,11 @@ export class GnlBooksStack extends cdk.Stack {
     // change the schema. The runner maps this function's IAM role to it, so it
     // needs the runner's env var, and the trigger waits for the function.
     this.cluster.grantConnect(graphqlFunction);
+    // The access token has no email, so the API reads the caller's verified
+    // email from Cognito by their `sub`, for a new family and a join request.
+    graphqlFunction.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['cognito-idp:AdminGetUser'], resources: [this.userPool.userPoolArn] }),
+    );
     migrationRunner.addEnvironment('DSQL_APP_ROLE_ARN', graphqlFunction.role!.roleArn);
     migrationTrigger.executeAfter(graphqlFunction);
     cdkSecret.grantRead(graphqlFunction);

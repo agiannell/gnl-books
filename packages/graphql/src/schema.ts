@@ -7,10 +7,16 @@ import {
   cacheHardcoverBook,
   createProfile,
   deleteProfile,
+  approveJoinRequest,
+  denyJoinRequest,
   getBook,
   getFamily,
   getFamilyTimezone,
   InvalidTimezoneError,
+  listJoinRequests,
+  requestToJoin,
+  TooManyFamiliesError,
+  type JoinRequest,
   setFamilyTimezone,
   getGoal,
   getProfile,
@@ -144,11 +150,29 @@ ProfileRef.implement({
   }),
 });
 
+// Someone with no family who asked to join this one. Only a parent sees these.
+const JoinRequestRef = builder.objectRef<JoinRequest>('JoinRequest');
+JoinRequestRef.implement({
+  fields: (t) => ({
+    id: t.exposeID('id'),
+    // Their verified email, so the parent knows who is asking.
+    email: t.exposeString('email'),
+    requestedAt: t.string({ resolve: (request) => request.requestedAt.toISOString() }),
+  }),
+});
+
 const FamilyRef = builder.objectRef<Family>('Family');
 FamilyRef.implement({
   fields: (t) => ({
     id: t.exposeID('id'),
     name: t.exposeString('name'),
+    // Open requests to join the caller's own family, oldest first. Parent-only: approving one
+    // gives a stranger the kids' reading data, so it is behind the PIN like other sensitive actions.
+    joinRequests: t.field({
+      type: [JoinRequestRef],
+      authScopes: { isParent: true },
+      resolve: (_family, _args, ctx) => listJoinRequests(ctx.db, ctx.familyId!),
+    }),
     // The zone its dates are kept in (an IANA name). Like `profiles`, always the caller's own family.
     timezone: t.string({
       authScopes: { inFamily: true },
@@ -298,6 +322,16 @@ function requireName(value: string, label: string): string {
   const name = value.trim();
   if (name.length < 1 || name.length > 60) throw badInput(`${label} must be 1 to 60 characters`);
   return name;
+}
+
+// Not a full address check (a confirmation email is the real one): it catches a typo before a request is made.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_EMAIL_CHARACTERS = 254;
+
+function requireEmail(value: string): string {
+  const email = value.trim();
+  if (email.length > MAX_EMAIL_CHARACTERS || !EMAIL_PATTERN.test(email)) throw badInput('Enter a valid email address');
+  return email;
 }
 
 function requireRating(rating: number): void {
@@ -717,13 +751,61 @@ builder.mutationType({
         const parentName = requireName(args.parentName, 'Your name');
         if (!PIN_PATTERN.test(args.pin)) throw badInput('PIN must be 4 to 8 digits');
         try {
-          return await bootstrapFamily(ctx.db, { cognitoSub: ctx.cognitoSub, familyName, parentName, pin: args.pin });
+          return await bootstrapFamily(ctx.db, {
+            cognitoSub: ctx.cognitoSub,
+            // So a later user can name this parent to ask to join.
+            email: await ctx.verifiedEmail(),
+            familyName,
+            parentName,
+            pin: args.pin,
+          });
         } catch (error) {
           if (error instanceof AlreadyBootstrappedError) {
             throw new GraphQLError('You already have a family', { extensions: { code: 'CONFLICT' } });
           }
+          if (error instanceof TooManyFamiliesError) {
+            throw new GraphQLError(error.message, { extensions: { code: 'LIMIT_REACHED' } });
+          }
           throw error;
         }
+      },
+    }),
+
+    // Asks to join the family of the parent with this email, instead of making a new one. It
+    // answers the same whether or not that email belongs to a family (so nobody can probe for
+    // them); a parent then approves or denies the request in their settings.
+    requestToJoin: t.boolean({
+      authScopes: { noFamily: true },
+      args: { parentEmail: t.arg.string() },
+      resolve: async (_root, args, ctx) => {
+        const parentEmail = requireEmail(args.parentEmail);
+        const email = await ctx.verifiedEmail();
+        if (!email) throw badInput('Verify your email address before asking to join a family');
+        await requestToJoin(ctx.db, { cognitoSub: ctx.cognitoSub, email, parentEmail });
+        return true;
+      },
+    }),
+
+    // Lets a person who asked to join into the family. Parent-only, so it needs the PIN.
+    approveJoinRequest: t.boolean({
+      authScopes: { isParent: true },
+      args: { requestId: t.arg.id() },
+      resolve: async (_root, args, ctx) => {
+        if (!(await approveJoinRequest(ctx.db, ctx.familyId!, String(args.requestId)))) {
+          throw new GraphQLError('Request not found', { extensions: { code: 'NOT_FOUND' } });
+        }
+        return true;
+      },
+    }),
+
+    denyJoinRequest: t.boolean({
+      authScopes: { isParent: true },
+      args: { requestId: t.arg.id() },
+      resolve: async (_root, args, ctx) => {
+        if (!(await denyJoinRequest(ctx.db, ctx.familyId!, String(args.requestId)))) {
+          throw new GraphQLError('Request not found', { extensions: { code: 'NOT_FOUND' } });
+        }
+        return true;
       },
     }),
   }),
