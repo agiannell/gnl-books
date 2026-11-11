@@ -62,6 +62,7 @@ export interface Families {
 export interface JoinRequests {
   cognito_sub: string;
   created_at: Generated<Timestamp>;
+  denied_at: Timestamp | null;
   email: string;
   family_id: string;
   id: string;

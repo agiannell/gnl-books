@@ -1,7 +1,7 @@
 import { useApolloClient, useMutation } from '@apollo/client/react';
 import { Button, Card, Flex, Heading, Text, TextField } from '@radix-ui/themes';
 import { useState, type FormEvent } from 'react';
-import { ME, REQUEST_TO_JOIN } from './queries.ts';
+import { JOIN_REQUEST_DENIED, ME, REQUEST_TO_JOIN } from './queries.ts';
 import { Alert, Field } from './ui.tsx';
 
 // The server checks the address again. This only catches a typo before the request is made.
@@ -12,7 +12,14 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * that parent approves them in their settings. The API answers the same whether or not the email
  * belongs to a family (so nobody can use this to find out), and so does this page.
  */
-export default function JoinFamily({ onCreateInstead }: { onCreateInstead: () => void }) {
+export default function JoinFamily({
+  onCreateInstead,
+  onAsked,
+}: {
+  onCreateInstead: () => void;
+  /** Called once a request has gone in, so a notice about an earlier, declined one stops applying. */
+  onAsked: () => void;
+}) {
   const client = useApolloClient();
   const [requestToJoin, { loading, error }] = useMutation(REQUEST_TO_JOIN);
   const [parentEmail, setParentEmail] = useState('');
@@ -27,7 +34,13 @@ export default function JoinFamily({ onCreateInstead }: { onCreateInstead: () =>
     setInvalid(found);
     if (found) return;
     try {
-      await requestToJoin({ variables: { parentEmail: trimmed } });
+      // A new request replaces a declined one, so the notice about it must be read again, not kept.
+      await requestToJoin({
+        variables: { parentEmail: trimmed },
+        refetchQueries: [JOIN_REQUEST_DENIED],
+        awaitRefetchQueries: true,
+      });
+      onAsked();
       setSent(true);
     } catch {
       // The reason is in `error` below.
@@ -35,10 +48,11 @@ export default function JoinFamily({ onCreateInstead }: { onCreateInstead: () =>
   };
 
   // Home reads the family from `me`: once a parent has approved, it shows the family instead of this page.
+  // If a parent declined instead, the denied flag turns on and NoFamily says so.
   const checkAgain = async () => {
     setChecking(true);
     try {
-      await client.refetchQueries({ include: [ME] });
+      await client.refetchQueries({ include: [ME, JOIN_REQUEST_DENIED] });
     } finally {
       setChecking(false);
     }

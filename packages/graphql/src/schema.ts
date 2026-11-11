@@ -16,6 +16,7 @@ import {
   listJoinRequests,
   requestToJoin,
   TooManyFamiliesError,
+  wasJoinRequestDenied,
   type JoinRequest,
   setFamilyTimezone,
   getGoal,
@@ -290,6 +291,15 @@ builder.queryType({
     me: t.field({
       type: AccountRef,
       resolve: (_root, _args, ctx) => ({ cognitoSub: ctx.cognitoSub, familyId: ctx.familyId }),
+    }),
+    // True when the caller asked to join a family and a parent turned them down (for 7 days, until they
+    // ask again or set up their own). Only a parent answering changes this: a request to an email that
+    // belongs to no family, and one nobody has answered, both stay false, so it cannot be used to find
+    // families. Always false once there is a family, without looking. A root field of its own rather
+    // than part of `me`, because `me` has no id for the client cache to merge a second query into.
+    joinRequestDenied: t.boolean({
+      resolve: (_root, _args, ctx) =>
+        ctx.familyId === null ? wasJoinRequestDenied(ctx.db, ctx.cognitoSub) : false,
     }),
     // Null for an id that is not one of this family's profiles, including a
     // malformed id or another family's: the caller learns nothing about those.

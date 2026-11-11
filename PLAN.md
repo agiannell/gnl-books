@@ -95,13 +95,15 @@ create table accounts (
 );
 
 -- A signed-in user with no family asking to join one. A parent approves (making an
--- accounts row) or denies it. One per user; only the newest 7 days count.
+-- accounts row) or denies it (denied_at is set and created_at restarts, so the
+-- requester can be told). One per user; only the newest 7 days count.
 create table join_requests (
   id uuid primary key,
   cognito_sub text not null,
   email text not null,
   family_id uuid not null references families(id) on delete cascade,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  denied_at timestamptz                 -- null = still open
 );
 
 -- Everyone who reads, kids included.
@@ -261,7 +263,7 @@ One user pool. **Adults get Cognito accounts; kids don't** — they're profiles 
 - **Alexa:** account linking against the same pool — a documented Amazon + Cognito pattern. Authorization endpoint is the Cognito Hosted UI `/oauth2/authorize`, token endpoint `/oauth2/token`, with Amazon's redirect URLs (`pitangui.amazon.com`, `layla.amazon.com`, `alexa.amazon.co.jp`) registered as callbacks. Set refresh-token expiry long (Cognito allows up to 3650 days) so the link doesn't silently rot.
 - **Parent PIN** still gates sensitive actions in-app (deleting books, CSV export, profile management; **decided 2026-11-08: not "editing another profile's shelf"**, because a Cognito sign-in maps to the family, not to a profile, so the API cannot tell whose session it is. Any signed-in family member can add, rate, and finish books on any profile's shelf, and the SPA's profile picker is a convenience, not a security boundary) — because once signed in, a kid has the session. Hash with `scrypt` + `timingSafeEqual` from `node:crypto`, stored in `families.parent_pin_hash` as `scrypt$N$r$p$salt$hash`. The API is stateless, so a correct PIN returns a **short-lived signed unlock token** (`unlockParent(pin)`), sent back in an `X-Parent-Token` header; a valid one for that user and family sets `isParent` in the resolver context. It slides (2 minutes, renewed by `renewParentUnlock` on each parent action) up to a 15-minute cap, is HS256-signed with a key in Secrets Manager, and is held in memory by the SPA, which discards it when idle, hidden, or locked. It cannot be revoked server-side. `unlockParent` locks for 15 minutes after 5 wrong PINs (`families.failed_pin_attempts`, `pin_locked_until`), because a 4-digit PIN has only 10,000 values. A 4 to 8 digit PIN is a convenience gate, not an offline-proof secret; the API's Cognito requirement is the real protection. On the voice side, `authenticationConfidenceLevel` on the `person` object can gate parent intents instead.
 
-**First-run bootstrap:** a Cognito user who signs in with no `accounts` row creates a family, becomes its parent profile, and sets the PIN. **Sign-up is open (decided 2026-11-11, so the app can be shown to others).** Cognito verifies the email before anyone can sign in. Beyond a cap on families (`MAX_FAMILIES`, 100), a new user can instead **ask to join a family** by entering a parent's email (`requestToJoin`). The API answers the same whether or not the email belongs to a family, so it cannot be used to find them. A parent sees the request in Settings and approves or denies it with the PIN unlock (`approveJoinRequest` / `denyJoinRequest`); nobody joins a family any other way. Requests last 7 days, a family holds at most 5 open ones, and a user has one at a time (making a family withdraws it). The API verifies Cognito *access* tokens, which carry no email, so it reads the caller's verified email from Cognito (`AdminGetUser` by `sub`) and stores it on `accounts.email` when a family is made or joined. Older accounts get theirs filled in the first time they are used.
+**First-run bootstrap:** a Cognito user who signs in with no `accounts` row creates a family, becomes its parent profile, and sets the PIN. **Sign-up is open (decided 2026-11-11, so the app can be shown to others).** Cognito verifies the email before anyone can sign in. Beyond a cap on families (`MAX_FAMILIES`, 100), a new user can instead **ask to join a family** by entering a parent's email (`requestToJoin`). The API answers the same whether or not the email belongs to a family, so it cannot be used to find them. A parent sees the request in Settings and approves or denies it with the PIN unlock (`approveJoinRequest` / `denyJoinRequest`); nobody joins a family any other way. Requests last 7 days, a family holds at most 5 open ones, and a user has one at a time (making a family withdraws it). **A denial is kept** (`denied_at`, with the 7 days restarted) so the requester is told: `joinRequestDenied` is true only after a parent actually denied, so a request to an unknown email and one nobody has answered both still read as false, and nothing about guessed emails leaks. The requester sees "Request declined" on "Check again" and can ask a different parent or set up their own family. The API verifies Cognito *access* tokens, which carry no email, so it reads the caller's verified email from Cognito (`AdminGetUser` by `sub`) and stores it on `accounts.email` when a family is made or joined. Older accounts get theirs filled in the first time they are used.
 
 ---
 

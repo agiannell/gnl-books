@@ -23,6 +23,7 @@ export {
   normalizeEmail,
   REQUEST_LIFETIME_DAYS,
   requestToJoin,
+  wasJoinRequestDenied,
   type JoinRequest,
 } from './joinRequests';
 export { hashPin, PIN_PATTERN, verifyPin } from './pin';

@@ -67,9 +67,13 @@ describe('Home', () => {
   });
 
   it('asks someone with no family to set one up, without asking the API for a family', async () => {
-    const api = renderHome({ Me: { data: { me: { __typename: 'Account', familyId: null } } } });
+    const api = renderHome({
+      Me: { data: { me: { __typename: 'Account', familyId: null } } },
+      JoinRequestDenied: { data: { joinRequestDenied: false } },
+    });
     expect(await screen.findByRole('heading', { name: 'Set up your family' })).toBeTruthy();
-    expect(api.calls.map((c) => c.operationName)).toEqual(['Me']);
+    // Someone with no family is also asked whether a parent declined them, never for a family.
+    expect(api.calls.map((c) => c.operationName)).toEqual(['Me', 'JoinRequestDenied']);
   });
 
   it('shows an error when the API refuses', async () => {

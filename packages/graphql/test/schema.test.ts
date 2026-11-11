@@ -30,6 +30,7 @@ const {
   listJoinRequests,
   approveJoinRequest,
   denyJoinRequest,
+  wasJoinRequestDenied,
 } = vi.hoisted(() => ({
   getFamily: vi.fn(),
   getFamilyTimezone: vi.fn(),
@@ -58,6 +59,7 @@ const {
   listJoinRequests: vi.fn(),
   approveJoinRequest: vi.fn(),
   denyJoinRequest: vi.fn(),
+  wasJoinRequestDenied: vi.fn(),
 }));
 // Only what touches the database is mocked; the PIN rule and the error classes
 // are the real ones, so these tests cannot drift from core.
@@ -92,6 +94,7 @@ vi.mock('@gnl-books/core', async () => {
     listJoinRequests,
     approveJoinRequest,
     denyJoinRequest,
+    wasJoinRequestDenied,
   };
 });
 import {
@@ -157,6 +160,7 @@ beforeEach(() => {
   listJoinRequests.mockReset();
   approveJoinRequest.mockReset();
   denyJoinRequest.mockReset();
+  wasJoinRequestDenied.mockReset();
   books.search.mockReset();
   books.getById.mockReset();
   parentTokens.issue.mockReset().mockResolvedValue({ token: 'new-token', expiresAt });
@@ -171,6 +175,34 @@ describe('me', () => {
   it('reports the caller’s family', async () => {
     const result = await run('{ me { familyId } }', { familyId: 'family-1' });
     expect(result).toEqual({ data: { me: { familyId: 'family-1' } } });
+  });
+
+});
+
+describe('joinRequestDenied', () => {
+  const ask = '{ joinRequestDenied }';
+
+  it('is true for someone with no family whose request a parent denied, looked up by their own sub', async () => {
+    wasJoinRequestDenied.mockResolvedValue(true);
+    expect((await run(ask, { cognitoSub: 'sub-from-token' })).data).toEqual({ joinRequestDenied: true });
+    expect(wasJoinRequestDenied).toHaveBeenCalledWith(db, 'sub-from-token');
+  });
+
+  it('is false for someone with no family and nothing denied', async () => {
+    wasJoinRequestDenied.mockResolvedValue(false);
+    expect((await run(ask)).data).toEqual({ joinRequestDenied: false });
+  });
+
+  // A member has nothing to be told, and the lookup would be a wasted read.
+  it('is false for a family member, without looking anything up', async () => {
+    wasJoinRequestDenied.mockResolvedValue(true);
+    expect((await run(ask, { familyId: 'family-1' })).data).toEqual({ joinRequestDenied: false });
+    expect(wasJoinRequestDenied).not.toHaveBeenCalled();
+  });
+
+  it('is not looked up by the ordinary family query', async () => {
+    await run('{ me { familyId } }');
+    expect(wasJoinRequestDenied).not.toHaveBeenCalled();
   });
 });
 

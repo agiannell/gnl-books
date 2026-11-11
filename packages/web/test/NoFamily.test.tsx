@@ -12,10 +12,12 @@ const inFamily = { data: { me: { __typename: 'Account', familyId: 'f-1' } } };
 const family = {
   data: { family: { __typename: 'Family', id: 'f-1', name: 'The Gnls', profiles: [{ __typename: 'Profile', id: 'p-1', name: 'Pat', emoji: null, color: null }] } },
 };
+const notDenied = { data: { joinRequestDenied: false } };
+const denied = { data: { joinRequestDenied: true } };
 const failure = (message: string) => ({ errors: [{ message }] });
 
 const renderHome = (handlers: Parameters<typeof fakeApi>[0]) => {
-  const api = fakeApi({ Me: noFamily, ...handlers });
+  const api = fakeApi({ Me: noFamily, JoinRequestDenied: notDenied, ...handlers });
   const client = createApolloClient({ getAccessToken: async () => 'tok', fetch: api.fetch });
   render(
     <MemoryRouter>
@@ -120,6 +122,75 @@ describe('a signed-in user with no family', () => {
 
     await user.click(screen.getByRole('button', { name: 'Check again' }));
     expect(await screen.findByRole('heading', { name: 'Who’s reading?' })).toBeTruthy();
+  });
+
+  describe('when a parent declined their request', () => {
+    it('says so first, instead of the setup form', async () => {
+      renderHome({ JoinRequestDenied: denied });
+      expect(await screen.findByRole('heading', { name: 'Request declined' })).toBeTruthy();
+      expect(document.body.textContent).toContain('A parent of that family declined your request to join.');
+      expect(screen.queryByRole('heading', { name: 'Set up your family' })).toBeNull();
+    });
+
+    it('does not flash the setup form while it finds out', async () => {
+      let answer!: (reply: unknown) => void;
+      renderHome({ JoinRequestDenied: () => new Promise((resolve) => (answer = resolve)) });
+      expect(await screen.findByText('Loading…')).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Set up your family' })).toBeNull();
+      answer(denied);
+      expect(await screen.findByRole('heading', { name: 'Request declined' })).toBeTruthy();
+    });
+
+    it('offers setting up their own family', async () => {
+      renderHome({ JoinRequestDenied: denied });
+      await userEvent.setup().click(await screen.findByRole('button', { name: 'Set up my own family' }));
+      expect(await screen.findByRole('heading', { name: 'Set up your family' })).toBeTruthy();
+    });
+
+    it('offers asking a different parent', async () => {
+      renderHome({ JoinRequestDenied: denied });
+      await userEvent.setup().click(await screen.findByRole('button', { name: 'Ask a different parent' }));
+      expect(await screen.findByRole('heading', { name: 'Join a family' })).toBeTruthy();
+    });
+
+    // A failed lookup must never stand between someone and setting up a family.
+    it('shows the setup form when the lookup itself fails', async () => {
+      renderHome({ JoinRequestDenied: failure('Something broke') });
+      expect(await screen.findByRole('heading', { name: 'Set up your family' })).toBeTruthy();
+    });
+
+    it('is not shown to someone nobody has declined', async () => {
+      renderHome({ JoinRequestDenied: notDenied });
+      expect(await screen.findByRole('heading', { name: 'Set up your family' })).toBeTruthy();
+      expect(screen.queryByRole('heading', { name: 'Request declined' })).toBeNull();
+    });
+
+    // The reason the requester gets any answer at all: Check again is how they learn it.
+    it('shows up when they check again after waiting', async () => {
+      const api = renderHome({
+        RequestToJoin: { data: { requestToJoin: true } },
+        JoinRequestDenied: [notDenied, notDenied, denied],
+      });
+      const user = await openJoin();
+      await ask(user, 'parent@example.test');
+      await user.click(await screen.findByRole('button', { name: 'Check again' }));
+      expect(await screen.findByRole('heading', { name: 'Request declined' })).toBeTruthy();
+      expect(api.calls.filter((c) => c.operationName === 'JoinRequestDenied').length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('is shown again if the next request is declined too, after they asked again', async () => {
+      renderHome({
+        RequestToJoin: { data: { requestToJoin: true } },
+        // The first read; the refresh after the new request went in; then Check again.
+        JoinRequestDenied: [denied, notDenied, denied],
+      });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole('button', { name: 'Ask a different parent' }));
+      await ask(user, 'other@example.test');
+      expect(await screen.findByRole('heading', { name: 'Request sent' })).toBeTruthy();
+      await user.click(screen.getByRole('button', { name: 'Check again' }));
+      expect(await screen.findByRole('heading', { name: 'Request declined' })).toBeTruthy();
+    });
   });
 
   it('can give up waiting and set up their own family', async () => {

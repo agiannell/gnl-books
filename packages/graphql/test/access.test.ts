@@ -84,6 +84,7 @@ describe('unauthenticated access', () => {
     ['setting the time zone', { query: 'mutation { setTimezone(timezone: "UTC") { id } }' }],
     ['exporting a shelf',{ query: 'mutation { exportGoodreadsCsv(profileId: "p") }' }],
     ['removing a book from a shelf', { query: 'mutation { removeFromShelf(shelfEntryId: "e") }' }],
+    ['asking whether a join request was denied', { query: '{ joinRequestDenied }' }],
     ['asking to join a family', { query: 'mutation { requestToJoin(parentEmail: "p@example.test") }' }],
     ['approving a join request', { query: 'mutation { approveJoinRequest(requestId: "r") }' }],
     ['denying a join request', { query: 'mutation { denyJoinRequest(requestId: "r") }' }],
