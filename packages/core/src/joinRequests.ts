@@ -62,6 +62,7 @@ export async function requestToJoin(
       .selectFrom('join_requests')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('family_id', '=', parent.family_id)
+      .where('denied_at', 'is', null)
       .executeTakeFirstOrThrow();
     if (Number(n) >= MAX_PENDING_REQUESTS) return;
 
@@ -78,6 +79,7 @@ export async function listJoinRequests(db: Db, familyId: string): Promise<JoinRe
     .selectFrom('join_requests')
     .select(['id', 'email', 'created_at'])
     .where('family_id', '=', familyId)
+    .where('denied_at', 'is', null)
     .where('created_at', '>', alive)
     .orderBy('created_at')
     .execute();
@@ -98,6 +100,7 @@ export async function approveJoinRequest(db: Db, familyId: string, requestId: st
       .selectAll()
       .where('id', '=', requestId)
       .where('family_id', '=', familyId)
+      .where('denied_at', 'is', null)
       .where('created_at', '>', alive)
       .executeTakeFirst();
     if (!request) return false;
@@ -118,13 +121,36 @@ export async function approveJoinRequest(db: Db, familyId: string, requestId: st
   });
 }
 
-/** Turns a request down. False when it is not this family's or is already gone. */
+/**
+ * Turns a request down. It is kept, marked as denied, so the person who asked can be told (see
+ * {@link wasJoinRequestDenied}); its 7 days start again from now, so they get the same time to see it.
+ * False when it is not this family's, is already answered, or is gone.
+ */
 export async function denyJoinRequest(db: Db, familyId: string, requestId: string): Promise<boolean> {
   if (!isUuid(requestId)) return false;
   const result = await db
-    .deleteFrom('join_requests')
+    .updateTable('join_requests')
+    .set({ denied_at: sql`now()`, created_at: sql`now()` })
     .where('id', '=', requestId)
     .where('family_id', '=', familyId)
+    .where('denied_at', 'is', null)
+    .where('created_at', '>', alive)
     .executeTakeFirst();
-  return result.numDeletedRows > 0n;
+  return result.numUpdatedRows > 0n;
+}
+
+/**
+ * Whether a parent turned this user's request down, and they have not asked again since. Only a parent
+ * answering makes this true, so it tells the user nothing about an email they only guessed: a request to
+ * an unknown email, and one nobody has answered yet, both read as false.
+ */
+export async function wasJoinRequestDenied(db: Db, cognitoSub: string): Promise<boolean> {
+  const row = await db
+    .selectFrom('join_requests')
+    .select('id')
+    .where('cognito_sub', '=', cognitoSub)
+    .where('denied_at', 'is not', null)
+    .where('created_at', '>', alive)
+    .executeTakeFirst();
+  return row !== undefined;
 }

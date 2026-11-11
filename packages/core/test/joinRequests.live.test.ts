@@ -11,6 +11,7 @@ import {
   listJoinRequests,
   MAX_PENDING_REQUESTS,
   requestToJoin,
+  wasJoinRequestDenied,
 } from '../src/joinRequests';
 import type { DB } from '../src/schema';
 
@@ -218,7 +219,7 @@ describe.skipIf(!endpoint && !localUrl)('join requests (live)', () => {
       expect(await denyJoinRequest(db, parent.familyId, id)).toBe(false);
     });
 
-    it('denying removes the request and gives no account', async () => {
+    it('denying takes the request off the family’s list and gives no account', async () => {
       const parent = await newFamily();
       const stranger = newStranger();
       await requestToJoin(db, { cognitoSub: stranger.sub, email: stranger.email, parentEmail: parent.email });
@@ -241,6 +242,117 @@ describe.skipIf(!endpoint && !localUrl)('join requests (live)', () => {
       expect(await approveJoinRequest(db, parent.familyId, request.id)).toBe(false);
       expect(await accountFamily(stranger.sub)).toBe(own.familyId);
       expect(await requestsFor(parent.familyId)).toEqual([]);
+    });
+  });
+
+  describe('being told a request was denied', () => {
+    /** A request that a parent has turned down. */
+    async function denied() {
+      const parent = await newFamily();
+      const stranger = newStranger();
+      await requestToJoin(db, { cognitoSub: stranger.sub, email: stranger.email, parentEmail: parent.email });
+      const [request] = await requestsFor(parent.familyId);
+      await denyJoinRequest(db, parent.familyId, request.id);
+      return { parent, stranger, request };
+    }
+    const wasDenied = (sub: string) => wasJoinRequestDenied(db, sub);
+
+    it('is true once a parent has denied the request', async () => {
+      const { stranger } = await denied();
+      expect(await wasDenied(stranger.sub)).toBe(true);
+    });
+
+    // What keeps asking from being a way to find out which emails belong to families: only a parent
+    // actually answering changes what the requester can see.
+    it('is false when nothing has been answered: no request, an unknown email, or one still open', async () => {
+      const parent = await newFamily();
+      const none = newStranger();
+      const unknown = newStranger();
+      const open = newStranger();
+      await requestToJoin(db, { cognitoSub: unknown.sub, email: unknown.email, parentEmail: `nobody-${randomUUID()}@example.test` });
+      await requestToJoin(db, { cognitoSub: open.sub, email: open.email, parentEmail: parent.email });
+      expect([await wasDenied(none.sub), await wasDenied(unknown.sub), await wasDenied(open.sub)]).toEqual([false, false, false]);
+    });
+
+    it('is false for someone else, and for the person who was approved', async () => {
+      const { stranger } = await denied();
+      expect(await wasDenied(newStranger().sub)).toBe(false);
+
+      const parent = await newFamily();
+      const approved = newStranger();
+      await requestToJoin(db, { cognitoSub: approved.sub, email: approved.email, parentEmail: parent.email });
+      const [request] = await requestsFor(parent.familyId);
+      await approveJoinRequest(db, parent.familyId, request.id);
+      expect(await wasDenied(approved.sub)).toBe(false);
+      expect(await wasDenied(stranger.sub)).toBe(true);
+    });
+
+    it('is cleared when they ask again, and the new request is open', async () => {
+      const { parent, stranger } = await denied();
+      await requestToJoin(db, { cognitoSub: stranger.sub, email: stranger.email, parentEmail: parent.email });
+      expect(await wasDenied(stranger.sub)).toBe(false);
+      expect(await requestsFor(parent.familyId)).toHaveLength(1);
+    });
+
+    it('is cleared when they ask someone else, even an unknown email', async () => {
+      const { stranger } = await denied();
+      await requestToJoin(db, { cognitoSub: stranger.sub, email: stranger.email, parentEmail: `nobody-${randomUUID()}@example.test` });
+      expect(await wasDenied(stranger.sub)).toBe(false);
+    });
+
+    it('is cleared when they set up their own family', async () => {
+      const { stranger } = await denied();
+      const own = await bootstrapFamily(db, { cognitoSub: stranger.sub, email: stranger.email, familyName: 'Mine', parentName: 'S', pin: '1234' });
+      families.push(own.id);
+      expect(await wasDenied(stranger.sub)).toBe(false);
+    });
+
+    it('lasts 7 days from the denial, not from when they asked', async () => {
+      const parent = await newFamily();
+      const stranger = newStranger();
+      await requestToJoin(db, { cognitoSub: stranger.sub, email: stranger.email, parentEmail: parent.email });
+      // Asked six days ago, denied just now: still shown, because the clock restarted at the denial.
+      await db.updateTable('join_requests').set({ created_at: sql<Date>`now() - interval '6 days'` }).where('cognito_sub', '=', stranger.sub).execute();
+      const [request] = await requestsFor(parent.familyId);
+      await denyJoinRequest(db, parent.familyId, request.id);
+      expect(await wasDenied(stranger.sub)).toBe(true);
+      // Six days old would still be alive, so check the clock itself: it was restarted at the denial.
+      const { age } = await sql<{ age: string }>`select extract(epoch from now() - created_at)::text as age from join_requests where cognito_sub = ${stranger.sub}`
+        .execute(db)
+        .then((r) => r.rows[0]!);
+      expect(Number(age)).toBeLessThan(60);
+
+      await db.updateTable('join_requests').set({ created_at: sql<Date>`now() - interval '8 days'` }).where('cognito_sub', '=', stranger.sub).execute();
+      expect(await wasDenied(stranger.sub)).toBe(false);
+    });
+
+    it('cannot be approved afterwards, or denied again', async () => {
+      const { parent, stranger, request } = await denied();
+      expect(await approveJoinRequest(db, parent.familyId, request.id)).toBe(false);
+      expect(await denyJoinRequest(db, parent.familyId, request.id)).toBe(false);
+      expect(await accountFamily(stranger.sub)).toBeUndefined();
+    });
+
+    it('does not count towards the family’s open requests', async () => {
+      const parent = await newFamily();
+      const strangers = Array.from({ length: MAX_PENDING_REQUESTS }, newStranger);
+      for (const s of strangers) await requestToJoin(db, { cognitoSub: s.sub, email: s.email, parentEmail: parent.email });
+      for (const r of await requestsFor(parent.familyId)) await denyJoinRequest(db, parent.familyId, r.id);
+      expect(await requestsFor(parent.familyId)).toEqual([]);
+
+      const late = newStranger();
+      await requestToJoin(db, { cognitoSub: late.sub, email: late.email, parentEmail: parent.email });
+      expect((await requestsFor(parent.familyId)).map((r) => r.email)).toEqual([late.email]);
+    });
+
+    it('will not deny a request that has already expired', async () => {
+      const parent = await newFamily();
+      const stranger = newStranger();
+      await requestToJoin(db, { cognitoSub: stranger.sub, email: stranger.email, parentEmail: parent.email });
+      const [request] = await requestsFor(parent.familyId);
+      await db.updateTable('join_requests').set({ created_at: sql<Date>`now() - interval '8 days'` }).where('id', '=', request.id).execute();
+      expect(await denyJoinRequest(db, parent.familyId, request.id)).toBe(false);
+      expect(await wasDenied(stranger.sub)).toBe(false);
     });
   });
 

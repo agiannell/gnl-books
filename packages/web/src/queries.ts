@@ -249,6 +249,15 @@ export const REQUEST_TO_JOIN = gql`
   }
 `;
 
+// True when a parent turned down the request this user made. A root field of its own, because `me` has no
+// id for the cache to merge a second query into. Only a parent answering makes it true, so it says
+// nothing about an email that was only guessed.
+export const JOIN_REQUEST_DENIED = gql`
+  query JoinRequestDenied {
+    joinRequestDenied
+  }
+`;
+
 // Parent-only: the open requests to join this family.
 export const SETTINGS_JOIN_REQUESTS = gql`
   query SettingsJoinRequests {
