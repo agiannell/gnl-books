@@ -25,6 +25,9 @@ const CDK_SECRET_NAME = 'gnl-books/cdk';
 const PARENT_TOKEN_KEY = 'parentTokenKey';
 // Created by hand, never by this stack; the API reads `hardcoverApiKey` from it.
 const APP_SECRET_NAME = 'gnl-books/app';
+// The limited database role the API connects as. The migration runner creates
+// it and maps the API's IAM role to it; the API is told its name in DSQL_USER.
+const APP_DB_ROLE = 'gnl_books_app';
 // Vite's default dev-server origin, which `create-react-router` uses.
 const LOCAL_DEV_URL = 'http://localhost:5173';
 
@@ -54,7 +57,8 @@ export class GnlBooksStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_24_X,
       timeout: cdk.Duration.minutes(5),
       memorySize: 256,
-      environment: { DSQL_ENDPOINT: this.cluster.clusterEndpoint },
+      // DSQL_APP_ROLE_ARN is added below, once the API's role exists.
+      environment: { DSQL_ENDPOINT: this.cluster.clusterEndpoint, DSQL_APP_USER: APP_DB_ROLE },
       bundling: {
         // pg loads this optional native addon lazily; it is not installed.
         externalModules: ['pg-native'],
@@ -70,9 +74,10 @@ export class GnlBooksStack extends cdk.Stack {
       projectRoot: path.join(__dirname, '..', '..'),
       depsLockFilePath: path.join(__dirname, '..', '..', 'yarn.lock'),
     });
-    // DDL needs the admin database role.
+    // DDL, role creation and IAM mapping need the admin database role. Only
+    // the runner has it.
     this.cluster.grantConnectAdmin(migrationRunner);
-    new triggers.Trigger(this, 'MigrationTrigger', {
+    const migrationTrigger = new triggers.Trigger(this, 'MigrationTrigger', {
       handler: migrationRunner,
       executeOnHandlerChange: true,
       executeAfter: [this.cluster],
@@ -279,6 +284,7 @@ export class GnlBooksStack extends cdk.Stack {
       memorySize: 512,
       environment: {
         DSQL_ENDPOINT: this.cluster.clusterEndpoint,
+        DSQL_USER: APP_DB_ROLE,
         USER_POOL_ID: this.userPool.userPoolId,
         USER_POOL_WEB_CLIENT_ID: this.webClient.userPoolClientId,
         // The ARN, not the value: the function reads the secret at runtime.
@@ -292,9 +298,12 @@ export class GnlBooksStack extends cdk.Stack {
       projectRoot: path.join(__dirname, '..', '..'),
       depsLockFilePath: path.join(__dirname, '..', '..', 'yarn.lock'),
     });
-    // Interim: the admin role, like the migration runner. The API should get a
-    // custom DSQL role limited to DML once those are set up (see TODO.md).
-    this.cluster.grantConnectAdmin(graphqlFunction);
+    // The API connects as APP_DB_ROLE, which can read and write rows but not
+    // change the schema. The runner maps this function's IAM role to it, so it
+    // needs the runner's env var, and the trigger waits for the function.
+    this.cluster.grantConnect(graphqlFunction);
+    migrationRunner.addEnvironment('DSQL_APP_ROLE_ARN', graphqlFunction.role!.roleArn);
+    migrationTrigger.executeAfter(graphqlFunction);
     cdkSecret.grantRead(graphqlFunction);
     appSecret.grantRead(graphqlFunction);
 

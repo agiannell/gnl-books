@@ -118,7 +118,9 @@ function hardcoverToken(env: NodeJS.ProcessEnv): () => Promise<string> {
 // The one place the server is assembled, so the Lambda and the local dev
 // server cannot drift apart.
 export function createApp(env: NodeJS.ProcessEnv = process.env) {
-  const db = createDb({ host: required(env, 'DSQL_ENDPOINT') });
+  // The Lambda sets DSQL_USER to its limited database role; locally it is
+  // unset and the connection is the developer's admin one.
+  const db = createDb({ host: required(env, 'DSQL_ENDPOINT'), user: env.DSQL_USER || undefined });
   const parentTokens = lazyParentTokens(parentTokenSecret(env));
   const books = lazyBookSource(hardcoverToken(env));
   const verifier = createCognitoVerifier({
