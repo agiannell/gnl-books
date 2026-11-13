@@ -15,7 +15,7 @@ Unfinished, in rough priority order (details and sizes in `REVIEW_TODO.md`): the
 
 **Not yet verified live:** approving a join request (tested only in automated tests), and the "Request declined" screen after a deny (the API and migration are deployed; the user planned to click through it).
 
-**Repo state at writing:** `main` is clean and matches production. Branch `docs-app-review` is pushed with the two review docs and has **no PR open**. The four workspace `CLAUDE.md` files and this file may be uncommitted on that branch; check `git status`.
+**Repo state at writing:** `main` matches production for code. It also includes the review docs, this file, the READMEs and the workspace `CLAUDE.md` files (PR #44, docs only, nothing to deploy).
 
 ## Decisions already made (do not reopen without a reason)
 
@@ -78,6 +78,6 @@ Incident to know about: on 2026-11-11 a GitHub Actions outage left runs queued w
 ## Suggested first steps
 
 1. Read `REVIEW_SUMMARY.md` section 2 (the top 10) and pick from the P0 list in `REVIEW_TODO.md`. Do them as small PRs, one per item.
-2. Ask the owner whether to open the PR for `docs-app-review` (the review and these docs), and whether they verified approve and the "Request declined" screen.
+2. Ask the owner whether they verified approving a join request and the "Request declined" screen.
 3. Clean up the throwaway Cognito test user once the owner says testing is done.
 4. When touching web code, first read `packages/web/CLAUDE.md` (CSP limits, cache rules, test fixtures); for API changes, `packages/graphql/CLAUDE.md` (the three mock files).
